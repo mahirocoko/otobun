@@ -6,12 +6,7 @@ Otobun turns voices, videos, and recordings into clean, searchable transcripts.
 
 ## Positioning
 
-Otobun is a local-first transcript workspace. It should feel friendly enough for non-developers, but have a reliable engine that can also be driven from a CLI.
-
-It is related to Murmur only by lineage:
-
-- **Murmur**: live dictation and paste flow
-- **Otobun**: media-to-transcript workspace and archive
+Otobun is a local-first transcript workspace and archive. It should feel friendly enough for non-developers, but have a reliable engine that can also be driven from a CLI.
 
 ## Principles
 

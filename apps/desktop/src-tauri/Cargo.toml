@@ -1,0 +1,21 @@
+[package]
+name = "otobun-desktop"
+version = "0.1.0"
+description = "Otobun desktop transcript workspace"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/mahirocoko/otobun"
+
+[lib]
+name = "otobun_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+otobun-core = { path = "../../../crates/core" }
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-dialog = "2.7.1"

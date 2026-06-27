@@ -8,20 +8,27 @@
 
 ## Milestone 1 — CLI/Core Spike
 
-- [ ] Create Rust workspace
+- [x] Create Rust workspace
 - [ ] Implement media probe command
-- [ ] Normalize audio through `ffmpeg`
-- [ ] Call local whisper backend with a user-provided model path
-- [ ] Emit transcript JSON with timestamp segments
-- [ ] Export Markdown, TXT, SRT, and VTT
+- [x] Normalize audio through `ffmpeg`
+- [x] Call local whisper backend with a user-provided model path
+- [x] Emit transcript JSON with timestamp segments
+- [x] Export Markdown, TXT, SRT, and VTT
+
+## Milestone 1.5 — End-user Desktop Shell
+
+- [x] Add Tauri 2 + React desktop shell
+- [x] Add end-user transcript form and preview
+- [x] Add `pnpm desktop:install` flow to install `/Applications/Otobun.app`
+- [x] Add Biome for frontend formatting/linting
 
 ## Milestone 2 — Desktop MVP
 
-- [ ] Create Tauri 2 + React app
+- [x] Create Tauri 2 + React app
 - [ ] Drag-and-drop local audio/video files
 - [ ] Show transcription progress and errors
-- [ ] Transcript viewer with timestamps
-- [ ] Copy/export actions
+- [x] Transcript viewer with timestamps
+- [x] Copy/export actions
 - [ ] Local transcript history
 
 ## Milestone 3 — Library and Search

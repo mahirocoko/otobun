@@ -1,0 +1,20 @@
+{
+  "name": "otobun-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "check": "pnpm biome:check && cargo test --workspace && pnpm desktop:check",
+    "format": "biome format --write . && cargo fmt --all",
+    "biome:check": "biome check .",
+    "biome:write": "biome check --write .",
+    "desktop:dev": "pnpm --filter @otobun/desktop tauri dev",
+    "desktop:build": "pnpm --filter @otobun/desktop tauri build",
+    "desktop:check": "pnpm --filter @otobun/desktop check",
+    "desktop:install": "node scripts/install-desktop.mjs",
+    "desktop:preview": "pnpm --filter @otobun/desktop preview"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.1"
+  }
+}
