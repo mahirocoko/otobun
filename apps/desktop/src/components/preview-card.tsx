@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import IconCopy from '~icons/lucide/copy'
 import IconFileText from '~icons/lucide/file-text'
+import IconRotateCcw from '~icons/lucide/rotate-ccw'
 import type { ExportFormat } from '../types'
 import { Button } from './ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
@@ -10,6 +11,7 @@ interface IPreviewCardProps {
   output: string
   format: ExportFormat
   onCopy: () => void
+  onNewTranscript: () => void
 }
 
 interface ISegment {
@@ -18,7 +20,7 @@ interface ISegment {
   text: string
 }
 
-const PreviewCard = ({ output, format, onCopy }: IPreviewCardProps) => {
+const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardProps) => {
   const [viewMode, setViewMode] = useState<'reader' | 'source'>('reader')
 
   const parsedSegments = useMemo<ISegment[]>(() => {
@@ -95,24 +97,48 @@ const PreviewCard = ({ output, format, onCopy }: IPreviewCardProps) => {
 
       if (format === 'md') {
         const segments: ISegment[] = []
+        let currentSegment: ISegment | null = null
 
-        for (const line of output.split('\n').filter(Boolean)) {
-          const markdownMatch = line.match(/-\s+\*\*([^[]*?)\[?(\d{2}:\d{2})\]?\*\*:\s*(.*)/)
-          if (markdownMatch) {
+        const commitSegment = () => {
+          if (!currentSegment) return
+          if (currentSegment.text.trim()) {
+            segments.push({ ...currentSegment, text: currentSegment.text.trim() })
+          }
+          currentSegment = null
+        }
+
+        for (const rawLine of output.split('\n')) {
+          const line = rawLine.trim()
+          if (!line || line.startsWith('# ') || line.startsWith('_Source:')) continue
+
+          const currentMarkdownMatch = line.match(/^\*\*(.*?)\*\*\s+`?(\d{2}:\d{2})`?\s*(.*)$/)
+          if (currentMarkdownMatch) {
+            commitSegment()
+            currentSegment = {
+              time: currentMarkdownMatch[2],
+              speaker: currentMarkdownMatch[1].trim() || 'Speaker 1',
+              text: currentMarkdownMatch[3].trim(),
+            }
+            continue
+          }
+
+          const legacyMarkdownMatch = line.match(/-\s+\*\*([^[]*?)\[?(\d{2}:\d{2})\]?\*\*:\s*(.*)/)
+          if (legacyMarkdownMatch) {
+            commitSegment()
             segments.push({
-              time: markdownMatch[2],
-              speaker: markdownMatch[1].trim() || 'Speaker 1',
-              text: markdownMatch[3].trim(),
+              time: legacyMarkdownMatch[2],
+              speaker: legacyMarkdownMatch[1].trim() || 'Speaker 1',
+              text: legacyMarkdownMatch[3].trim(),
             })
             continue
           }
 
-          const simpleMatch = line.match(/-\s+\*\*\[?(\d{2}:\d{2})\]?\*\*\s+(.*)/)
-          if (simpleMatch) {
-            segments.push({ time: simpleMatch[1], speaker: 'Speaker 1', text: simpleMatch[2].trim() })
+          if (currentSegment) {
+            currentSegment.text = [currentSegment.text, line].filter(Boolean).join(' ')
           }
         }
 
+        commitSegment()
         if (segments.length > 0) return segments
       }
     } catch (error) {
@@ -128,7 +154,10 @@ const PreviewCard = ({ output, format, onCopy }: IPreviewCardProps) => {
   return (
     <Card className="preview-card">
       <CardHeader className="preview-header">
-        <CardTitle>Output</CardTitle>
+        <div>
+          <CardTitle>Output</CardTitle>
+          <p className="preview-subtitle">Review the transcript result, then start another pass when ready.</p>
+        </div>
         <div className="preview-actions">
           <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'reader' | 'source')}>
             <TabsList>
@@ -139,6 +168,10 @@ const PreviewCard = ({ output, format, onCopy }: IPreviewCardProps) => {
           <Button disabled={!output} onClick={onCopy} size="sm" type="button" variant="secondary">
             <IconCopy />
             Copy
+          </Button>
+          <Button onClick={onNewTranscript} size="sm" type="button">
+            <IconRotateCcw />
+            New transcript
           </Button>
         </div>
       </CardHeader>

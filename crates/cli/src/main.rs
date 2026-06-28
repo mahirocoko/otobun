@@ -4,7 +4,8 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use otobun_core::{
-    export_transcript, sample_transcript, transcribe_file, ExportFormat, TranscribeOptions,
+    export_transcript, sample_transcript, transcribe_file, ChunkMode, ExportFormat,
+    TranscribeOptions,
 };
 
 #[derive(Debug, Parser)]
@@ -47,6 +48,9 @@ enum Commands {
         /// Keep temporary normalized audio and whisper output for debugging.
         #[arg(long)]
         keep_temp: bool,
+        /// Transcription mode: single or smart.
+        #[arg(long, default_value = "single")]
+        chunk_mode: String,
     },
 }
 
@@ -77,6 +81,7 @@ fn run(cli: Cli) -> Result<String, Box<dyn std::error::Error>> {
             ffmpeg_bin,
             whisper_bin,
             keep_temp,
+            chunk_mode,
         } => {
             let mut options = TranscribeOptions::new(input, model);
             options.title = title;
@@ -84,6 +89,10 @@ fn run(cli: Cli) -> Result<String, Box<dyn std::error::Error>> {
             options.ffmpeg_bin = ffmpeg_bin;
             options.whisper_bin = whisper_bin;
             options.keep_temp = keep_temp;
+            options.chunk_mode = match chunk_mode.trim().to_ascii_lowercase().as_str() {
+                "smart" => ChunkMode::Smart,
+                _ => ChunkMode::Single,
+            };
             let transcript = transcribe_file(&options)?;
             Ok(export_transcript(&transcript, format)?)
         }

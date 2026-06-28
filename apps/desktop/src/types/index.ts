@@ -8,6 +8,8 @@ export type AppSection = 'transcribe' | 'library' | 'models' | 'settings' | 'per
 
 export type OutputLocation = 'downloads' | 'source-folder' | 'custom'
 
+export type TranscribeMode = 'single' | 'smart'
+
 export interface ICommandResponse {
   output: string
   wroteTo?: string | null
@@ -42,4 +44,37 @@ export interface IOutputLocationOption {
   id: OutputLocation
   label: string
   description: string
+}
+
+export interface IModelFileResponse {
+  id: string
+  fileName: string
+  path: string
+  sizeBytes: number
+}
+
+export interface IModelDownloadProgress {
+  modelId: string
+  downloadedBytes: number
+  totalBytes?: number | null
+  percent?: number | null
+  state: string
+}
+
+export interface IEngineStatus {
+  available: boolean
+  binaryPath?: string | null
+  version?: string | null
+  message: string
+}
+
+export interface ITranscribeProgress {
+  stage: string
+  message: string
+  percent?: number | null
+}
+
+export interface IMediaPreview {
+  durationMs: number
+  peaks: number[]
 }

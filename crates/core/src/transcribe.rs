@@ -1,12 +1,36 @@
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{Speaker, TimeRange, Transcript, TranscriptSegment};
+
+#[derive(Debug, Clone)]
+pub struct TranscribeProgress {
+    pub stage: &'static str,
+    pub message: String,
+    pub percent: Option<f64>,
+}
+
+impl TranscribeProgress {
+    fn new(stage: &'static str, message: impl Into<String>, percent: Option<f64>) -> Self {
+        Self {
+            stage,
+            message: message.into(),
+            percent,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkMode {
+    Single,
+    Smart,
+}
 
 #[derive(Debug, Clone)]
 pub struct TranscribeOptions {
@@ -17,6 +41,7 @@ pub struct TranscribeOptions {
     pub ffmpeg_bin: PathBuf,
     pub whisper_bin: PathBuf,
     pub keep_temp: bool,
+    pub chunk_mode: ChunkMode,
 }
 
 impl TranscribeOptions {
@@ -29,6 +54,7 @@ impl TranscribeOptions {
             ffmpeg_bin: PathBuf::from("ffmpeg"),
             whisper_bin: PathBuf::from("whisper-cli"),
             keep_temp: false,
+            chunk_mode: ChunkMode::Single,
         }
     }
 }
@@ -57,9 +83,21 @@ pub enum TranscribeError {
     ParseWhisperOutput(serde_json::Error),
     #[error("unsupported whisper JSON shape")]
     UnsupportedWhisperJson,
+    #[error("failed to inspect normalized audio duration")]
+    InspectDuration,
 }
 
 pub fn transcribe_file(options: &TranscribeOptions) -> Result<Transcript, TranscribeError> {
+    transcribe_file_with_progress(options, |_| {})
+}
+
+pub fn transcribe_file_with_progress<F>(
+    options: &TranscribeOptions,
+    mut on_progress: F,
+) -> Result<Transcript, TranscribeError>
+where
+    F: FnMut(TranscribeProgress),
+{
     if !options.input.exists() {
         return Err(TranscribeError::MissingInput(options.input.clone()));
     }
@@ -67,17 +105,42 @@ pub fn transcribe_file(options: &TranscribeOptions) -> Result<Transcript, Transc
         return Err(TranscribeError::MissingModel(options.model.clone()));
     }
 
+    on_progress(TranscribeProgress::new(
+        "preparing",
+        "Preparing workspace",
+        Some(2.0),
+    ));
+
     let temp_dir = create_temp_dir()?;
     let normalized_wav = temp_dir.join("input.wav");
     let whisper_output_base = temp_dir.join("transcript");
     let whisper_output_json = temp_dir.join("transcript.json");
 
-    let result = normalize_audio(options, &normalized_wav)
-        .and_then(|_| run_whisper(options, &normalized_wav, &whisper_output_base))
-        .and_then(|_| parse_whisper_output_file(options, &whisper_output_json));
+    let result = normalize_audio(options, &normalized_wav, &mut on_progress).and_then(|_| {
+        match options.chunk_mode {
+            ChunkMode::Single => transcribe_single_pass(
+                options,
+                &normalized_wav,
+                &whisper_output_base,
+                &whisper_output_json,
+                &mut on_progress,
+            ),
+            ChunkMode::Smart => {
+                transcribe_smart_chunks(options, &temp_dir, &normalized_wav, &mut on_progress)
+            }
+        }
+    });
 
     if !options.keep_temp {
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    if result.is_ok() {
+        on_progress(TranscribeProgress::new(
+            "done",
+            "Transcription complete",
+            Some(100.0),
+        ));
     }
 
     result
@@ -93,7 +156,20 @@ fn create_temp_dir() -> Result<PathBuf, TranscribeError> {
     Ok(dir)
 }
 
-fn normalize_audio(options: &TranscribeOptions, output_wav: &Path) -> Result<(), TranscribeError> {
+fn normalize_audio<F>(
+    options: &TranscribeOptions,
+    output_wav: &Path,
+    on_progress: &mut F,
+) -> Result<(), TranscribeError>
+where
+    F: FnMut(TranscribeProgress),
+{
+    on_progress(TranscribeProgress::new(
+        "normalizing",
+        "Normalizing audio with ffmpeg",
+        Some(8.0),
+    ));
+
     let output = Command::new(&options.ffmpeg_bin)
         .arg("-y")
         .arg("-i")
@@ -115,14 +191,36 @@ fn normalize_audio(options: &TranscribeOptions, output_wav: &Path) -> Result<(),
         });
     }
 
+    on_progress(TranscribeProgress::new(
+        "normalizing",
+        "Audio normalized",
+        Some(18.0),
+    ));
     Ok(())
 }
 
-fn run_whisper(
+fn run_whisper<F>(
     options: &TranscribeOptions,
     input_wav: &Path,
     output_base: &Path,
-) -> Result<(), TranscribeError> {
+    on_progress: &mut F,
+    progress_start: f64,
+    progress_span: f64,
+    progress_message: String,
+) -> Result<(), TranscribeError>
+where
+    F: FnMut(TranscribeProgress),
+{
+    let thread_count = std::thread::available_parallelism()
+        .map(|count| count.get().saturating_sub(1).clamp(4, 8))
+        .unwrap_or(4);
+
+    on_progress(TranscribeProgress::new(
+        "transcribing",
+        format!("{progress_message} with {thread_count} threads"),
+        Some(progress_start),
+    ));
+
     let mut command = Command::new(&options.whisper_bin);
     command
         .arg("-m")
@@ -131,22 +229,335 @@ fn run_whisper(
         .arg(input_wav)
         .arg("-oj")
         .arg("-of")
-        .arg(output_base);
+        .arg(output_base)
+        .arg("-pp")
+        .arg("-t")
+        .arg(thread_count.to_string())
+        .arg("-p")
+        .arg("1")
+        .arg("-bs")
+        .arg("1")
+        .arg("-bo")
+        .arg("1");
 
     if let Some(language) = &options.language {
         command.arg("-l").arg(language);
     }
 
-    let output = command.output().map_err(TranscribeError::WhisperIo)?;
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(TranscribeError::WhisperIo)?;
+
+    let mut stderr_output = String::new();
+    if let Some(stderr) = child.stderr.take() {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            let line = line.map_err(TranscribeError::WhisperIo)?;
+            if !line.trim().is_empty() {
+                stderr_output.push_str(&line);
+                stderr_output.push('\n');
+            }
+            if let Some(percent) = parse_whisper_progress(&line) {
+                on_progress(TranscribeProgress::new(
+                    "transcribing",
+                    progress_message.clone(),
+                    Some(progress_start + (percent * progress_span / 100.0)),
+                ));
+            }
+        }
+    }
+
+    let status = child.wait().map_err(TranscribeError::WhisperIo)?;
+    if !status.success() {
+        return Err(TranscribeError::WhisperFailed {
+            status: status.to_string(),
+            stderr: stderr_output.trim().to_string(),
+        });
+    }
+
+    on_progress(TranscribeProgress::new(
+        "transcribing",
+        "whisper.cpp finished",
+        Some(progress_start + progress_span),
+    ));
+    Ok(())
+}
+
+fn parse_whisper_progress(line: &str) -> Option<f64> {
+    let percent_index = line.find('%')?;
+    let before_percent = &line[..percent_index];
+    let number = before_percent
+        .split(|character: char| !(character.is_ascii_digit() || character == '.'))
+        .filter(|part| !part.is_empty())
+        .next_back()?;
+    number
+        .parse::<f64>()
+        .ok()
+        .map(|value| value.clamp(0.0, 100.0))
+}
+
+fn transcribe_single_pass<F>(
+    options: &TranscribeOptions,
+    normalized_wav: &Path,
+    whisper_output_base: &Path,
+    whisper_output_json: &Path,
+    on_progress: &mut F,
+) -> Result<Transcript, TranscribeError>
+where
+    F: FnMut(TranscribeProgress),
+{
+    run_whisper(
+        options,
+        normalized_wav,
+        whisper_output_base,
+        on_progress,
+        22.0,
+        72.0,
+        "Running whisper.cpp".to_string(),
+    )?;
+    on_progress(TranscribeProgress::new(
+        "parsing",
+        "Reading transcript output",
+        Some(96.0),
+    ));
+    parse_whisper_output_file(options, whisper_output_json)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AudioChunk {
+    start_ms: u64,
+    end_ms: u64,
+}
+
+impl AudioChunk {
+    fn duration_ms(self) -> u64 {
+        self.end_ms.saturating_sub(self.start_ms)
+    }
+}
+
+fn transcribe_smart_chunks<F>(
+    options: &TranscribeOptions,
+    temp_dir: &Path,
+    normalized_wav: &Path,
+    on_progress: &mut F,
+) -> Result<Transcript, TranscribeError>
+where
+    F: FnMut(TranscribeProgress),
+{
+    let duration_ms = wav_duration_ms(normalized_wav)?;
+    if duration_ms <= 10 * 60 * 1000 {
+        let whisper_output_base = temp_dir.join("transcript");
+        let whisper_output_json = temp_dir.join("transcript.json");
+        return transcribe_single_pass(
+            options,
+            normalized_wav,
+            &whisper_output_base,
+            &whisper_output_json,
+            on_progress,
+        );
+    }
+
+    on_progress(TranscribeProgress::new(
+        "chunking",
+        "Finding quiet split points",
+        Some(20.0),
+    ));
+    let silence_boundaries = detect_silence_boundaries(options, normalized_wav).unwrap_or_default();
+    let chunks = plan_chunks(duration_ms, &silence_boundaries);
+    let total_chunks = chunks.len().max(1);
+    let mut segments = Vec::new();
+
+    for (index, chunk) in chunks.iter().enumerate() {
+        let chunk_number = index + 1;
+        let chunk_path = temp_dir.join(format!("chunk-{chunk_number:04}.wav"));
+        let output_base = temp_dir.join(format!("transcript-{chunk_number:04}"));
+        let output_json = temp_dir.join(format!("transcript-{chunk_number:04}.json"));
+        let base_progress = 22.0 + ((index as f64 / total_chunks as f64) * 72.0);
+        let span = 72.0 / total_chunks as f64;
+
+        on_progress(TranscribeProgress::new(
+            "chunking",
+            format!("Preparing chunk {chunk_number}/{total_chunks}"),
+            Some(base_progress),
+        ));
+        extract_chunk(options, normalized_wav, &chunk_path, *chunk)?;
+        run_whisper(
+            options,
+            &chunk_path,
+            &output_base,
+            on_progress,
+            base_progress,
+            span * 0.92,
+            format!("Transcribing chunk {chunk_number}/{total_chunks}"),
+        )?;
+        let mut chunk_transcript = parse_whisper_output_file(options, &output_json)?;
+        for segment in &mut chunk_transcript.segments {
+            segment.range.start_ms += chunk.start_ms;
+            segment.range.end_ms += chunk.start_ms;
+        }
+        segments.extend(chunk_transcript.segments);
+    }
+
+    on_progress(TranscribeProgress::new(
+        "parsing",
+        "Merging transcript chunks",
+        Some(96.0),
+    ));
+
+    Ok(Transcript {
+        title: transcript_title(options),
+        source: Some(options.input.to_string_lossy().to_string()),
+        language: options.language.clone(),
+        speakers: default_speakers(),
+        segments,
+    })
+}
+
+fn wav_duration_ms(path: &Path) -> Result<u64, TranscribeError> {
+    let metadata = fs::metadata(path).map_err(|_| TranscribeError::InspectDuration)?;
+    let data_bytes = metadata.len().saturating_sub(44);
+    let bytes_per_second = 16_000_u64 * 2;
+    Ok((data_bytes * 1000) / bytes_per_second)
+}
+
+fn detect_silence_boundaries(
+    options: &TranscribeOptions,
+    input_wav: &Path,
+) -> Result<Vec<u64>, TranscribeError> {
+    let output = Command::new(&options.ffmpeg_bin)
+        .arg("-i")
+        .arg(input_wav)
+        .arg("-af")
+        .arg("silencedetect=noise=-35dB:d=0.6")
+        .arg("-f")
+        .arg("null")
+        .arg("-")
+        .output()
+        .map_err(TranscribeError::FfmpegIo)?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut starts = Vec::new();
+    let mut boundaries = Vec::new();
+
+    for line in stderr.lines() {
+        if let Some(value) = parse_silence_value(line, "silence_start:") {
+            starts.push(value);
+        } else if let Some(end) = parse_silence_value(line, "silence_end:") {
+            if let Some(start) = starts.pop() {
+                boundaries.push((((start + end) / 2.0) * 1000.0).round() as u64);
+            }
+        }
+    }
+
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    Ok(boundaries)
+}
+
+fn parse_silence_value(line: &str, marker: &str) -> Option<f64> {
+    let start = line.find(marker)? + marker.len();
+    line[start..]
+        .split_whitespace()
+        .next()?
+        .trim()
+        .parse::<f64>()
+        .ok()
+}
+
+fn plan_chunks(duration_ms: u64, silence_boundaries: &[u64]) -> Vec<AudioChunk> {
+    const TARGET_MS: u64 = 5 * 60 * 1000;
+    const MIN_MS: u64 = 2 * 60 * 1000;
+    const MAX_MS: u64 = 8 * 60 * 1000;
+
+    let mut chunks = Vec::new();
+    let mut start = 0_u64;
+
+    while duration_ms.saturating_sub(start) > MAX_MS {
+        let target = start + TARGET_MS;
+        let min_boundary = start + MIN_MS;
+        let max_boundary = (start + MAX_MS).min(duration_ms);
+        let boundary = silence_boundaries
+            .iter()
+            .copied()
+            .filter(|value| *value >= min_boundary && *value <= max_boundary)
+            .min_by_key(|value| value.abs_diff(target))
+            .unwrap_or(target.min(duration_ms));
+
+        chunks.push(AudioChunk {
+            start_ms: start,
+            end_ms: boundary,
+        });
+        start = boundary;
+    }
+
+    if start < duration_ms {
+        chunks.push(AudioChunk {
+            start_ms: start,
+            end_ms: duration_ms,
+        });
+    }
+
+    chunks
+}
+
+fn extract_chunk(
+    options: &TranscribeOptions,
+    input_wav: &Path,
+    output_wav: &Path,
+    chunk: AudioChunk,
+) -> Result<(), TranscribeError> {
+    let start_seconds = format_seconds(chunk.start_ms);
+    let duration_seconds = format_seconds(chunk.duration_ms());
+    let output = Command::new(&options.ffmpeg_bin)
+        .arg("-y")
+        .arg("-ss")
+        .arg(start_seconds)
+        .arg("-i")
+        .arg(input_wav)
+        .arg("-t")
+        .arg(duration_seconds)
+        .arg("-ar")
+        .arg("16000")
+        .arg("-ac")
+        .arg("1")
+        .arg("-c:a")
+        .arg("pcm_s16le")
+        .arg(output_wav)
+        .output()
+        .map_err(TranscribeError::FfmpegIo)?;
 
     if !output.status.success() {
-        return Err(TranscribeError::WhisperFailed {
+        return Err(TranscribeError::FfmpegFailed {
             status: output.status.to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
         });
     }
 
     Ok(())
+}
+
+fn format_seconds(ms: u64) -> String {
+    format!("{:.3}", ms as f64 / 1000.0)
+}
+
+fn transcript_title(options: &TranscribeOptions) -> String {
+    options.title.clone().unwrap_or_else(|| {
+        options
+            .input
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("Untitled transcript")
+            .to_string()
+    })
+}
+
+fn default_speakers() -> Vec<Speaker> {
+    vec![Speaker {
+        id: "speaker-1".to_string(),
+        label: "Speaker 1".to_string(),
+    }]
 }
 
 fn parse_whisper_output_file(
@@ -169,23 +580,11 @@ pub fn parse_whisper_json(
     let document: WhisperDocument =
         serde_json::from_str(raw).map_err(TranscribeError::ParseWhisperOutput)?;
     let segments = document.into_segments()?;
-    let title = options.title.clone().unwrap_or_else(|| {
-        options
-            .input
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("Untitled transcript")
-            .to_string()
-    });
-
     Ok(Transcript {
-        title,
+        title: transcript_title(options),
         source: Some(options.input.to_string_lossy().to_string()),
         language: options.language.clone(),
-        speakers: vec![Speaker {
-            id: "speaker-1".to_string(),
-            label: "Speaker 1".to_string(),
-        }],
+        speakers: default_speakers(),
         segments,
     })
 }

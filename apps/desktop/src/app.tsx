@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { downloadDir } from '@tauri-apps/api/path'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useEffect, useMemo, useState } from 'react'
@@ -18,7 +19,20 @@ import {
   MODEL_EXTENSIONS,
   RECORDING_DEVICE_OPTIONS,
 } from './constants'
-import type { AppSection, ExportFormat, ICommandResponse, InputMode, JobState, OutputLocation } from './types'
+import type {
+  AppSection,
+  ExportFormat,
+  ICommandResponse,
+  IEngineStatus,
+  IMediaPreview,
+  IModelDownloadProgress,
+  IModelFileResponse,
+  InputMode,
+  ITranscribeProgress,
+  JobState,
+  OutputLocation,
+  TranscribeMode,
+} from './types'
 import { cn } from './utils/cn'
 
 interface INavItem {
@@ -61,7 +75,7 @@ const resolveDefaultOutputPath = async (input: string, format: ExportFormat, out
   }
 
   const downloadsPath = await downloadDir()
-  return `${downloadsPath}/${fileName}`
+  return `${downloadsPath}/Otobun/${fileName}`
 }
 
 const App = () => {
@@ -74,43 +88,113 @@ const App = () => {
   const [language, setLanguage] = useState('mixed-th-en')
   const [format, setFormat] = useState<ExportFormat>('md')
   const [outputLocation, setOutputLocation] = useState<OutputLocation>('downloads')
+  const [transcribeMode, setTranscribeMode] = useState<TranscribeMode>('single')
   const [outputPath, setOutputPath] = useState('')
   const [ffmpegBin, setFfmpegBin] = useState('ffmpeg')
-  const [whisperBin, setWhisperBin] = useState('whisper-cli')
+  const [whisperBin, setWhisperBin] = useState('')
   const [keepTemp, setKeepTemp] = useState(false)
   const [recordingDeviceId, setRecordingDeviceId] = useState(RECORDING_DEVICE_OPTIONS[0]?.id ?? 'system-default')
   const [output, setOutput] = useState('')
   const [status, setStatus] = useState<JobState>('idle')
   const [message, setMessage] = useState('Ready')
+  const [engineStatus, setEngineStatus] = useState<IEngineStatus | null>(null)
+  const [transcribeProgress, setTranscribeProgress] = useState<ITranscribeProgress | null>(null)
+  const [mediaPreview, setMediaPreview] = useState<IMediaPreview | null>(null)
+  const [mediaPreviewLoading, setMediaPreviewLoading] = useState(false)
+  const [mediaPreviewError, setMediaPreviewError] = useState<string | null>(null)
   const [selectedModelId, setSelectedModelId] = useState<string>('custom')
-  const [installedModels, setInstalledModels] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(MODEL_CATALOG.map((item) => [item.id, false])),
-  )
+  const [installedModels, setInstalledModels] = useState<Record<string, string>>({})
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [uninstallingId, setUninstallingId] = useState<string | null>(null)
   const [downloadProgress, setDownloadProgress] = useState(0)
 
   // _Effects
   useEffect(() => {
-    if (downloadingId === null) return
+    const syncEngineStatus = async () => {
+      try {
+        const status = await invoke<IEngineStatus>('get_engine_status')
+        setEngineStatus(status)
+        if (status.binaryPath && !whisperBin.trim()) setWhisperBin(status.binaryPath)
+      } catch (error) {
+        setEngineStatus({ available: false, binaryPath: null, version: null, message: String(error) })
+      }
+    }
 
-    const interval = setInterval(() => {
-      setDownloadProgress((previous) => {
-        if (previous >= 100) {
-          clearInterval(interval)
-          setInstalledModels((current) => ({ ...current, [downloadingId]: true }))
-          setDownloadingId(null)
-          return 0
+    void syncEngineStatus()
+  }, [whisperBin])
+
+  useEffect(() => {
+    const syncInstalledModels = async () => {
+      try {
+        const responses = await invoke<IModelFileResponse[]>('list_models', {
+          requests: MODEL_CATALOG.map((item) => ({ id: item.id, fileName: item.fileName })),
+        })
+        setInstalledModels(Object.fromEntries(responses.map((item) => [item.id, item.path])))
+      } catch (error) {
+        setMessage(`Model check failed: ${String(error)}`)
+      }
+    }
+
+    void syncInstalledModels()
+  }, [])
+
+  useEffect(() => {
+    const unlisten = listen<IModelDownloadProgress>('model-download-progress', (event) => {
+      const progress = event.payload.percent ?? (event.payload.state === 'starting' ? 2 : 10)
+      setDownloadProgress(Math.max(0, Math.min(100, Math.round(progress / 10) * 10)))
+    })
+
+    return () => {
+      void unlisten.then((dispose) => dispose())
+    }
+  }, [])
+
+  useEffect(() => {
+    const unlisten = listen<ITranscribeProgress>('transcribe-progress', (event) => {
+      setTranscribeProgress(event.payload)
+    })
+
+    return () => {
+      void unlisten.then((dispose) => dispose())
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!input.trim()) {
+      setMediaPreview(null)
+      setMediaPreviewError(null)
+      setMediaPreviewLoading(false)
+      return
+    }
+
+    let isActive = true
+    const loadMediaPreview = async () => {
+      setMediaPreviewLoading(true)
+      setMediaPreviewError(null)
+      try {
+        const preview = await invoke<IMediaPreview>('get_media_preview', {
+          request: { path: input, ffmpegBin: ffmpegBin.trim() || null, barCount: 64 },
+        })
+        if (isActive) setMediaPreview(preview)
+      } catch (error) {
+        if (isActive) {
+          setMediaPreview(null)
+          setMediaPreviewError(String(error))
         }
+      } finally {
+        if (isActive) setMediaPreviewLoading(false)
+      }
+    }
 
-        return previous + 10
-      })
-    }, 200)
-
-    return () => clearInterval(interval)
-  }, [downloadingId])
+    void loadMediaPreview()
+    return () => {
+      isActive = false
+    }
+  }, [input, ffmpegBin])
 
   // _Computed
-  const canTranscribe = input.trim().length > 0 && selectedModelId === 'custom' && model.trim().length > 0
+  const selectedModelPath = selectedModelId === 'custom' ? model.trim() : installedModels[selectedModelId]
+  const canTranscribe = input.trim().length > 0 && Boolean(selectedModelPath)
   const selectedFormat = useMemo(() => FORMAT_OPTIONS.find((item) => item.value === format), [format])
 
   // _Dialog
@@ -137,6 +221,7 @@ const App = () => {
     if (typeof selected !== 'string') return
     setSelectedModelId('custom')
     setModel(selected)
+    setActiveSection('transcribe')
     setMessage('Custom model selected')
   }
 
@@ -158,12 +243,60 @@ const App = () => {
   }
 
   // _Actions
-  const handleDownloadModel = (id: string) => {
+  const handleDownloadModel = async (id: string) => {
+    const catalogItem = MODEL_CATALOG.find((item) => item.id === id)
+    if (!catalogItem) return
+
     setDownloadingId(id)
     setDownloadProgress(0)
+    setMessage(`Downloading ${catalogItem.name}`)
+
+    try {
+      const response = await invoke<IModelFileResponse>('download_model', {
+        request: { id: catalogItem.id, fileName: catalogItem.fileName },
+      })
+      setInstalledModels((current) => ({ ...current, [response.id]: response.path }))
+      setSelectedModelId(response.id)
+      setDownloadProgress(100)
+      setMessage(`${catalogItem.name} installed`)
+    } catch (error) {
+      setStatus('error')
+      setMessage(String(error))
+    } finally {
+      setDownloadingId(null)
+      setDownloadProgress(0)
+    }
+  }
+
+  const handleUninstallModel = async (id: string) => {
+    const catalogItem = MODEL_CATALOG.find((item) => item.id === id)
+    if (!catalogItem) return
+
+    setUninstallingId(id)
+    setMessage(`Removing ${catalogItem.name}`)
+
+    try {
+      await invoke('uninstall_model', {
+        request: { id: catalogItem.id, fileName: catalogItem.fileName },
+      })
+      setInstalledModels((current) => {
+        const nextModels = { ...current }
+        delete nextModels[id]
+        return nextModels
+      })
+      if (selectedModelId === id) setSelectedModelId('custom')
+      setMessage(`${catalogItem.name} removed`)
+    } catch (error) {
+      setStatus('error')
+      setMessage(String(error))
+    } finally {
+      setUninstallingId(null)
+    }
   }
 
   const runSample = async () => {
+    setOutput('')
+    setTranscribeProgress({ stage: 'sample', message: 'Generating sample transcript', percent: 20 })
     setStatus('running')
     setMessage('Generating sample')
     try {
@@ -176,9 +309,11 @@ const App = () => {
       })
       setOutput(response.output)
       setStatus('done')
+      setTranscribeProgress(null)
       setMessage(response.wroteTo ? `Saved to ${response.wroteTo}` : 'Sample loaded')
     } catch (error) {
       setStatus('error')
+      setTranscribeProgress(null)
       setMessage(String(error))
     }
   }
@@ -186,10 +321,12 @@ const App = () => {
   const runTranscribe = async () => {
     if (!canTranscribe) {
       setStatus('error')
-      setMessage('Choose media and a custom local model first')
+      setMessage('Choose media and an installed or custom model first')
       return
     }
 
+    setOutput('')
+    setTranscribeProgress({ stage: 'queued', message: 'Starting transcription', percent: 1 })
     setStatus('running')
     setMessage('Transcribing locally')
     try {
@@ -199,7 +336,7 @@ const App = () => {
       const response = await invoke<ICommandResponse>('transcribe', {
         request: {
           input: input.trim(),
-          model: model.trim(),
+          model: selectedModelPath,
           format,
           title: title.trim() || null,
           language: finalLanguage.trim() || null,
@@ -207,13 +344,16 @@ const App = () => {
           whisperBin: whisperBin.trim() || null,
           keepTemp,
           outputPath: finalOutputPath,
+          chunkMode: transcribeMode,
         },
       })
       setOutput(response.output)
       setStatus('done')
+      setTranscribeProgress(null)
       setMessage(response.wroteTo ? `Saved to ${response.wroteTo}` : 'Transcription complete')
     } catch (error) {
       setStatus('error')
+      setTranscribeProgress(null)
       setMessage(String(error))
     }
   }
@@ -227,7 +367,21 @@ const App = () => {
   const removeInput = () => {
     setInput('')
     setTitle('')
+    setMediaPreview(null)
+    setMediaPreviewError(null)
     setMessage('Media removed')
+  }
+
+  const startNewTranscript = () => {
+    setInput('')
+    setTitle('')
+    setMediaPreview(null)
+    setMediaPreviewError(null)
+    setOutput('')
+    setOutputPath('')
+    setStatus('idle')
+    setActiveSection('transcribe')
+    setMessage('Ready for a new transcript')
   }
 
   // _Render
@@ -264,48 +418,60 @@ const App = () => {
 
       <main className="app-main">
         <HeroCard activeSection={activeSection} message={message} status={status} />
-        <section className={activeSection === 'transcribe' ? 'workspace-grid' : 'workspace-single'}>
-          <TranscriptForm
-            activeSection={activeSection}
-            canTranscribe={canTranscribe}
-            downloadProgress={downloadProgress}
-            downloadingId={downloadingId}
-            ffmpegBin={ffmpegBin}
-            format={format}
-            input={input}
-            inputMode={inputMode}
-            installedModels={installedModels}
-            keepTemp={keepTemp}
-            language={language}
-            model={model}
-            outputLocation={outputLocation}
-            outputPath={outputPath}
-            recordingDeviceId={recordingDeviceId}
-            recordingDeviceOptions={RECORDING_DEVICE_OPTIONS}
-            selectedModelId={selectedModelId}
-            status={status}
-            title={title}
-            whisperBin={whisperBin}
-            onChangeActiveSection={setActiveSection}
-            onChangeFfmpegBin={setFfmpegBin}
-            onChangeFormat={setFormat}
-            onChangeInputMode={setInputMode}
-            onChangeKeepTemp={setKeepTemp}
-            onChangeLanguage={setLanguage}
-            onChangeOutputLocation={setOutputLocation}
-            onChangeRecordingDevice={setRecordingDeviceId}
-            onChangeSelectedModelId={setSelectedModelId}
-            onChangeTitle={setTitle}
-            onChangeWhisperBin={setWhisperBin}
-            onChooseInput={chooseInput}
-            onChooseModel={chooseModel}
-            onChooseOutput={chooseOutput}
-            onDownloadModel={handleDownloadModel}
-            onExportSample={runSample}
-            onRemoveInput={removeInput}
-            onTranscribe={runTranscribe}
-          />
-          {activeSection === 'transcribe' ? <PreviewCard format={format} output={output} onCopy={copyOutput} /> : null}
+        <section className={activeSection === 'transcribe' ? 'workspace-flow' : 'workspace-single'}>
+          {activeSection === 'transcribe' && output ? (
+            <PreviewCard format={format} output={output} onCopy={copyOutput} onNewTranscript={startNewTranscript} />
+          ) : (
+            <TranscriptForm
+              activeSection={activeSection}
+              canTranscribe={canTranscribe}
+              downloadProgress={downloadProgress}
+              downloadingId={downloadingId}
+              uninstallingId={uninstallingId}
+              engineStatus={engineStatus}
+              ffmpegBin={ffmpegBin}
+              format={format}
+              input={input}
+              inputMode={inputMode}
+              installedModels={installedModels}
+              keepTemp={keepTemp}
+              language={language}
+              model={model}
+              mediaPreview={mediaPreview}
+              mediaPreviewError={mediaPreviewError}
+              mediaPreviewLoading={mediaPreviewLoading}
+              outputLocation={outputLocation}
+              outputPath={outputPath}
+              recordingDeviceId={recordingDeviceId}
+              recordingDeviceOptions={RECORDING_DEVICE_OPTIONS}
+              selectedModelId={selectedModelId}
+              status={status}
+              transcribeProgress={transcribeProgress}
+              title={title}
+              transcribeMode={transcribeMode}
+              whisperBin={whisperBin}
+              onChangeActiveSection={setActiveSection}
+              onChangeFfmpegBin={setFfmpegBin}
+              onChangeFormat={setFormat}
+              onChangeInputMode={setInputMode}
+              onChangeKeepTemp={setKeepTemp}
+              onChangeLanguage={setLanguage}
+              onChangeOutputLocation={setOutputLocation}
+              onChangeRecordingDevice={setRecordingDeviceId}
+              onChangeSelectedModelId={setSelectedModelId}
+              onChangeTitle={setTitle}
+              onChangeTranscribeMode={setTranscribeMode}
+              onChangeWhisperBin={setWhisperBin}
+              onChooseInput={chooseInput}
+              onChooseModel={chooseModel}
+              onChooseOutput={chooseOutput}
+              onDownloadModel={(id: string) => void handleDownloadModel(id)}
+              onUninstallModel={(id: string) => void handleUninstallModel(id)}
+              onExportSample={runSample}
+              onRemoveInput={removeInput}
+              onTranscribe={runTranscribe}
+            />
+          )}
         </section>
       </main>
     </div>
