@@ -12,3 +12,7 @@ Direction:
 - cute, minimalist, and readable as a launcher icon
 
 This selected logo is used to generate the Tauri desktop icon set under `apps/desktop/src-tauri/icons/`.
+
+## Social preview
+
+`social-preview.png` is a 1280×640 GitHub social preview image using the selected Otobun logo inside a rounded icon tile, deep teal surface, cream typography, and coral waveform accents.
