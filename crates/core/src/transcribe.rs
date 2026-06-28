@@ -569,8 +569,9 @@ fn parse_whisper_output_file(
             output_json.to_path_buf(),
         ));
     }
-    let raw = fs::read_to_string(output_json).map_err(TranscribeError::ReadWhisperOutput)?;
-    parse_whisper_json(&raw, options)
+    let raw = fs::read(output_json).map_err(TranscribeError::ReadWhisperOutput)?;
+    let document = String::from_utf8_lossy(&raw);
+    parse_whisper_json(&document, options)
 }
 
 pub fn parse_whisper_json(

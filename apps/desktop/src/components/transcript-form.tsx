@@ -19,7 +19,6 @@ import type {
   IMediaPreview,
   InputMode,
   IRecordingDeviceOption,
-  ITranscribeProgress,
   JobState,
   OutputLocation,
   TranscribeMode,
@@ -49,7 +48,6 @@ interface ITranscriptFormProps {
   recordingDeviceId: string
   recordingDeviceOptions: IRecordingDeviceOption[]
   status: JobState
-  transcribeProgress: ITranscribeProgress | null
   title: string
   transcribeMode: TranscribeMode
   whisperBin: string
@@ -106,7 +104,6 @@ const TranscriptForm = ({
   recordingDeviceOptions,
   selectedModelId,
   status,
-  transcribeProgress,
   title,
   transcribeMode,
   whisperBin,
@@ -419,25 +416,6 @@ const TranscriptForm = ({
         <CardDescription>Import a local file or prepare the recording workspace.</CardDescription>
       </CardHeader>
       <CardContent className="transcribe-content">
-        {status === 'running' ? (
-          <div className="transcribe-progress-card">
-            <div className="progress-card-head">
-              <div>
-                <strong>{transcribeProgress?.message ?? 'Transcribing locally'}</strong>
-                <p>
-                  {transcribeProgress?.stage
-                    ? `Stage: ${transcribeProgress.stage}`
-                    : 'Normalizing audio and running whisper.cpp.'}
-                </p>
-              </div>
-              <span>{Math.round(transcribeProgress?.percent ?? 0)}%</span>
-            </div>
-            <span className="progress-track" role="progressbar" aria-label="Transcription progress">
-              <span style={{ width: `${Math.max(4, Math.min(100, transcribeProgress?.percent ?? 4))}%` }} />
-            </span>
-          </div>
-        ) : null}
-
         <Tabs value={inputMode} onValueChange={(value) => onChangeInputMode(value as InputMode)}>
           <TabsList>
             <TabsTrigger value="file">

@@ -261,6 +261,9 @@ button:disabled {
 }
 
 .ui-tabs-content {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   margin-top: 14px;
   outline: none;
 }
@@ -451,14 +454,14 @@ button:disabled {
 .workspace-grid,
 .workspace-single {
   flex: 1;
-  min-height: 0;
   overflow: auto;
   padding: 18px;
 }
 
 .workspace-flow {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 16px;
 }
 
@@ -469,20 +472,19 @@ button:disabled {
 }
 
 .workspace-single {
-  display: grid;
-  align-content: start;
-  justify-items: start;
+  display: flex;
+  align-items: flex-start;
 }
 
 .panel-card,
 .preview-card {
-  min-height: 0;
   overflow: visible;
 }
 
 .panel-card {
   width: 100%;
   min-width: 0;
+  max-width: 100%;
 }
 
 .narrow-panel {
@@ -491,25 +493,34 @@ button:disabled {
 
 .preview-card {
   display: flex;
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   flex-direction: column;
 }
 
 .workspace-flow .panel-card,
 .workspace-flow .preview-card {
-  width: min(920px, 100%);
+  width: 100%;
+  max-width: 920px;
 }
 
-.transcribe-content,
 .preview-body {
-  min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 .transcribe-content {
+  display: grid;
   min-width: 0;
-  overflow-x: hidden;
+  justify-items: stretch;
+  gap: 16px;
+  overflow: visible;
   padding-bottom: 18px;
+}
+
+.transcribe-content > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* transcribe */
@@ -555,13 +566,21 @@ button:disabled {
 .permission-row,
 .record-setup {
   display: flex;
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card-elevated);
   padding: 12px;
+}
+
+.selected-source > .ui-button,
+.model-summary-card > .ui-button,
+.output-summary-card > .ui-button {
+  flex: 0 0 auto;
 }
 
 .selected-source > svg,
@@ -661,6 +680,14 @@ button:disabled {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.transcribe-content .form-grid,
+.transcribe-content .model-summary-card,
+.transcribe-content .format-row,
+.transcribe-content .output-summary-card,
+.transcribe-content .action-row {
+  margin-top: 0;
 }
 
 .record-setup {
@@ -1124,11 +1151,13 @@ button:disabled {
 
 .media-preview-strip {
   display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 620px;
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   margin-top: 10px;
-  max-width: 620px;
 }
 
 .media-preview-strip audio {
@@ -1213,13 +1242,14 @@ button:disabled {
 }
 
 .workspace-output {
-  align-content: stretch;
   overflow: hidden;
 }
 
 .workspace-output .preview-card {
-  width: min(1280px, 100%);
-  height: 100%;
+  width: 100%;
+  max-width: 1280px;
+  min-height: 0;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
@@ -1228,6 +1258,7 @@ button:disabled {
 }
 
 .workspace-output .preview-body {
+  min-height: 0;
   flex: 1 1 auto;
   overflow-y: auto;
   padding-bottom: 18px;
@@ -1235,4 +1266,66 @@ button:disabled {
 
 .workspace-output .reader-list {
   padding-bottom: 2px;
+}
+
+.progress-screen-card {
+  width: min(920px, 100%);
+}
+
+.progress-screen-content {
+  display: grid;
+  min-height: 420px;
+  place-items: center;
+  align-content: center;
+  gap: 22px;
+  text-align: center;
+}
+
+.progress-orb {
+  display: grid;
+  width: 86px;
+  height: 86px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--primary), transparent 55%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary), transparent 88%);
+  color: var(--primary);
+}
+
+.progress-orb svg {
+  width: 38px;
+  height: 38px;
+  animation: progress-spin 1.4s linear infinite;
+}
+
+.progress-screen-copy {
+  display: grid;
+  max-width: 520px;
+  gap: 7px;
+}
+
+.progress-screen-copy strong {
+  font-size: 1.08rem;
+  letter-spacing: -0.01em;
+}
+
+.progress-screen-copy p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.86rem;
+}
+
+.progress-screen-meter {
+  display: grid;
+  width: min(520px, 100%);
+  gap: 10px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+@keyframes progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
