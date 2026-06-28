@@ -52,7 +52,7 @@ pub fn sample_transcript() -> Transcript {
         language: Some("mixed-th-en".to_string()),
         speakers: vec![Speaker {
             id: "speaker-1".to_string(),
-            label: "Speaker 1".to_string(),
+            label: "Transcript".to_string(),
         }],
         segments: vec![
             TranscriptSegment {

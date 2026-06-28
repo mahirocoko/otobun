@@ -41,6 +41,34 @@ interface INavItem {
   icon: typeof IconFileAudio
 }
 
+const MODEL_PREF_KEY = 'otobun:last-model'
+
+interface IModelPreference {
+  selectedModelId: string
+  customModelPath: string
+}
+
+const readModelPreference = (): IModelPreference => {
+  if (typeof window === 'undefined') return { selectedModelId: 'custom', customModelPath: '' }
+
+  try {
+    const rawValue = window.localStorage.getItem(MODEL_PREF_KEY)
+    if (!rawValue) return { selectedModelId: 'custom', customModelPath: '' }
+    const parsedValue = JSON.parse(rawValue) as Partial<IModelPreference>
+    return {
+      selectedModelId: typeof parsedValue.selectedModelId === 'string' ? parsedValue.selectedModelId : 'custom',
+      customModelPath: typeof parsedValue.customModelPath === 'string' ? parsedValue.customModelPath : '',
+    }
+  } catch {
+    return { selectedModelId: 'custom', customModelPath: '' }
+  }
+}
+
+const writeModelPreference = (preference: IModelPreference) => {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(MODEL_PREF_KEY, JSON.stringify(preference))
+}
+
 const NAV_ITEMS: INavItem[] = [
   { value: 'transcribe', label: 'Transcribe', icon: IconFileAudio },
   { value: 'models', label: 'Models', icon: IconDownload },
@@ -83,7 +111,7 @@ const App = () => {
   const [activeSection, setActiveSection] = useState<AppSection>('transcribe')
   const [inputMode, setInputMode] = useState<InputMode>('file')
   const [input, setInput] = useState('')
-  const [model, setModel] = useState('')
+  const [model, setModel] = useState(() => readModelPreference().customModelPath)
   const [title, setTitle] = useState('')
   const [language, setLanguage] = useState('mixed-th-en')
   const [format, setFormat] = useState<ExportFormat>('md')
@@ -102,7 +130,7 @@ const App = () => {
   const [mediaPreview, setMediaPreview] = useState<IMediaPreview | null>(null)
   const [mediaPreviewLoading, setMediaPreviewLoading] = useState(false)
   const [mediaPreviewError, setMediaPreviewError] = useState<string | null>(null)
-  const [selectedModelId, setSelectedModelId] = useState<string>('custom')
+  const [selectedModelId, setSelectedModelId] = useState<string>(() => readModelPreference().selectedModelId)
   const [installedModels, setInstalledModels] = useState<Record<string, string>>({})
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [uninstallingId, setUninstallingId] = useState<string | null>(null)
@@ -137,6 +165,19 @@ const App = () => {
 
     void syncInstalledModels()
   }, [])
+
+  useEffect(() => {
+    if (selectedModelId === 'custom') return
+    if (Object.keys(installedModels).length === 0) return
+    if (!installedModels[selectedModelId]) {
+      setSelectedModelId('custom')
+      writeModelPreference({ selectedModelId: 'custom', customModelPath: model })
+    }
+  }, [installedModels, model, selectedModelId])
+
+  useEffect(() => {
+    writeModelPreference({ selectedModelId, customModelPath: model })
+  }, [model, selectedModelId])
 
   useEffect(() => {
     const unlisten = listen<IModelDownloadProgress>('model-download-progress', (event) => {
@@ -284,7 +325,10 @@ const App = () => {
         delete nextModels[id]
         return nextModels
       })
-      if (selectedModelId === id) setSelectedModelId('custom')
+      if (selectedModelId === id) {
+        setSelectedModelId('custom')
+        writeModelPreference({ selectedModelId: 'custom', customModelPath: model })
+      }
       setMessage(`${catalogItem.name} removed`)
     } catch (error) {
       setStatus('error')
@@ -418,7 +462,15 @@ const App = () => {
 
       <main className="app-main">
         <HeroCard activeSection={activeSection} message={message} status={status} />
-        <section className={activeSection === 'transcribe' ? 'workspace-flow' : 'workspace-single'}>
+        <section
+          className={
+            activeSection === 'transcribe' && output
+              ? 'workspace-flow workspace-output'
+              : activeSection === 'transcribe'
+                ? 'workspace-flow'
+                : 'workspace-single'
+          }
+        >
           {activeSection === 'transcribe' && output ? (
             <PreviewCard format={format} output={output} onCopy={copyOutput} onNewTranscript={startNewTranscript} />
           ) : (

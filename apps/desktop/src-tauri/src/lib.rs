@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, SystemTime};
 
 use otobun_core::{
     export_transcript, sample_transcript, transcribe_file_with_progress, ChunkMode, ExportFormat,
@@ -589,8 +590,44 @@ fn write_optional_output(
     })
 }
 
+fn cleanup_stale_temp_dirs() {
+    const STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
+    let Ok(entries) = fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    let now = SystemTime::now();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("otobun-") || !path.is_dir() {
+            continue;
+        }
+
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified_at) = metadata.modified() else {
+            continue;
+        };
+        let Ok(age) = now.duration_since(modified_at) else {
+            continue;
+        };
+        if age > STALE_AFTER {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
+        .setup(|_app| {
+            cleanup_stale_temp_dirs();
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             export_sample,

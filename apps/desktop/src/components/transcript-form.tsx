@@ -634,12 +634,12 @@ const TranscriptForm = ({
             <span>Output</span>
             <strong>
               {outputLocation === 'downloads'
-                ? 'Downloads'
+                ? 'Downloads / Otobun'
                 : outputLocation === 'source-folder'
                   ? 'Source folder'
                   : 'Custom path'}
             </strong>
-            <p>{outputPath || 'Files save to Downloads unless you choose a path.'}</p>
+            <p>{outputPath || 'Files save to Downloads/Otobun unless you choose a path.'}</p>
           </div>
           <Button onClick={onChooseOutput} size="sm" type="button" variant="secondary">
             Choose path

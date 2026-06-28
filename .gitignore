@@ -18,6 +18,7 @@ target/
 # Local app state
 .agent-state/
 .pids/
+.playwright-cli/
 .letta/
 # CocoIndex Code (ccc)
 /.cocoindex_code/

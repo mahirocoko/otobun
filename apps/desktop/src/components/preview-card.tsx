@@ -46,7 +46,7 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
 
               return {
                 time: `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`,
-                speaker: segment.speaker || `Speaker ${segment.speaker_id || 1}`,
+                speaker: segment.speaker || 'Transcript',
                 text: segment.text || '',
               }
             },
@@ -64,12 +64,12 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
               const match = lines[1].match(/(\d{2}):(\d{2}):(\d{2})/)
               return {
                 time: match ? `${match[2]}:${match[3]}` : '00:00',
-                speaker: 'Speaker 1',
+                speaker: 'Transcript',
                 text: lines.slice(2).join(' '),
               }
             }
 
-            return { time: '00:00', speaker: 'Speaker 1', text: block }
+            return { time: '00:00', speaker: 'Transcript', text: block }
           })
       }
 
@@ -86,12 +86,12 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
               const match = timeLine.match(/(\d{2}):(\d{2}):(\d{2})/)
               return {
                 time: match ? `${match[2]}:${match[3]}` : '00:00',
-                speaker: 'Speaker 1',
+                speaker: 'Transcript',
                 text: textLines.join(' '),
               }
             }
 
-            return { time: '00:00', speaker: 'Speaker 1', text: block }
+            return { time: '00:00', speaker: 'Transcript', text: block }
           })
       }
 
@@ -116,7 +116,7 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
             commitSegment()
             currentSegment = {
               time: currentMarkdownMatch[2],
-              speaker: currentMarkdownMatch[1].trim() || 'Speaker 1',
+              speaker: currentMarkdownMatch[1].trim() || 'Transcript',
               text: currentMarkdownMatch[3].trim(),
             }
             continue
@@ -127,7 +127,7 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
             commitSegment()
             segments.push({
               time: legacyMarkdownMatch[2],
-              speaker: legacyMarkdownMatch[1].trim() || 'Speaker 1',
+              speaker: legacyMarkdownMatch[1].trim() || 'Transcript',
               text: legacyMarkdownMatch[3].trim(),
             })
             continue

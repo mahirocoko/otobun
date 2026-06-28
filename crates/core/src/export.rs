@@ -160,10 +160,10 @@ mod tests {
     }
 
     #[test]
-    fn exports_markdown_with_timestamp_and_speaker() {
+    fn exports_markdown_with_timestamp_and_transcript_label() {
         let output = export_transcript(&sample_transcript(), ExportFormat::Markdown).unwrap();
         assert!(output.contains("# Otobun sample"));
-        assert!(output.contains("**Speaker 1** `00:00`"));
+        assert!(output.contains("**Transcript** `00:00`"));
         assert!(output.contains("สวัสดี นี่คือ Otobun"));
     }
 

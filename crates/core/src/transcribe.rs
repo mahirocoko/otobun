@@ -556,7 +556,7 @@ fn transcript_title(options: &TranscribeOptions) -> String {
 fn default_speakers() -> Vec<Speaker> {
     vec![Speaker {
         id: "speaker-1".to_string(),
-        label: "Speaker 1".to_string(),
+        label: "Transcript".to_string(),
     }]
 }
 

@@ -165,6 +165,7 @@ button:disabled {
 .ui-input,
 .ui-select-trigger {
   width: 100%;
+  min-width: 0;
   height: 38px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -188,6 +189,7 @@ button:disabled {
 }
 
 .ui-card {
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
@@ -216,6 +218,7 @@ button:disabled {
 }
 
 .ui-card-content {
+  min-width: 0;
   padding: 18px;
 }
 
@@ -466,7 +469,9 @@ button:disabled {
 }
 
 .workspace-single {
-  display: flex;
+  display: grid;
+  align-content: start;
+  justify-items: start;
 }
 
 .panel-card,
@@ -477,6 +482,7 @@ button:disabled {
 
 .panel-card {
   width: 100%;
+  min-width: 0;
 }
 
 .narrow-panel {
@@ -498,6 +504,12 @@ button:disabled {
 .preview-body {
   min-height: 0;
   overflow: auto;
+}
+
+.transcribe-content {
+  min-width: 0;
+  overflow-x: hidden;
+  padding-bottom: 18px;
 }
 
 /* transcribe */
@@ -543,6 +555,7 @@ button:disabled {
 .permission-row,
 .record-setup {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 12px;
   border: 1px solid var(--border);
@@ -575,7 +588,10 @@ button:disabled {
 .custom-model-block strong,
 .permission-row strong {
   display: block;
+  overflow: hidden;
   font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .selected-source code,
@@ -601,13 +617,14 @@ button:disabled {
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
   margin-top: 16px;
 }
 
 .field-row {
   display: grid;
+  min-width: 0;
   gap: 7px;
 }
 
@@ -989,7 +1006,7 @@ button:disabled {
 }
 
 .workspace-single .panel-card {
-  max-width: 980px;
+  width: min(980px, 100%);
 }
 
 .model-grid {
@@ -1193,4 +1210,29 @@ button:disabled {
 .wave-bar.is-played {
   background: var(--primary);
   opacity: 1;
+}
+
+.workspace-output {
+  align-content: stretch;
+  overflow: hidden;
+}
+
+.workspace-output .preview-card {
+  width: min(1280px, 100%);
+  height: 100%;
+  overflow: hidden;
+}
+
+.workspace-output .preview-header {
+  flex: 0 0 auto;
+}
+
+.workspace-output .preview-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-bottom: 18px;
+}
+
+.workspace-output .reader-list {
+  padding-bottom: 2px;
 }
