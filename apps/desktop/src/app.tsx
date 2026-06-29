@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AppSidebar } from './components/app-sidebar'
 import { HeroCard } from './components/hero-card'
 import { TranscribeWorkspace } from './components/transcribe/transcribe-workspace'
@@ -14,7 +15,6 @@ import {
 } from './constants'
 import { useEngineStatus } from './hooks/use-engine-status'
 import { useInstalledModels } from './hooks/use-installed-models'
-import { useMediaPreview } from './hooks/use-media-preview'
 import { useModelPreference, writeModelPreference } from './hooks/use-model-preference'
 import { useTranscriptionJob } from './hooks/use-transcription-job'
 import type {
@@ -22,6 +22,9 @@ import type {
   ExportFormat,
   IClearTempFilesResponse,
   InputMode,
+  IRecordingDeviceOption,
+  IRecordingLevelEvent,
+  IRecordingResponse,
   OutputLocation,
   TranscribeMode,
 } from './types'
@@ -42,12 +45,18 @@ const App = () => {
   const [whisperBin, setWhisperBin] = useState('')
   const [keepTemp, setKeepTemp] = useState(false)
   const [recordingDeviceId, setRecordingDeviceId] = useState(RECORDING_DEVICE_OPTIONS[0]?.id ?? 'system-default')
+  const [recordingDeviceOptions, setRecordingDeviceOptions] =
+    useState<IRecordingDeviceOption[]>(RECORDING_DEVICE_OPTIONS)
+  const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'saving' | 'review'>('idle')
+  const [lastRecordingPath, setLastRecordingPath] = useState('')
+  const [recordingLevel, setRecordingLevel] = useState<IRecordingLevelEvent>({ peak: 0, rms: 0 })
+  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null)
+  const [recordingElapsedMs, setRecordingElapsedMs] = useState(0)
   const [message, setMessage] = useState('Ready')
 
   // _Hooks
   const { model, selectedModelId, setModel, setSelectedModelId } = useModelPreference()
   const engineStatus = useEngineStatus(whisperBin, setWhisperBin)
-  const { clearMediaPreview, mediaPreview, mediaPreviewError, mediaPreviewLoading } = useMediaPreview(input, ffmpegBin)
   const transcriptionJob = useTranscriptionJob(setMessage)
   const installedModelState = useInstalledModels({
     customModelPath: model,
@@ -63,6 +72,37 @@ const App = () => {
     onSelectModel: setSelectedModelId,
     selectedModelId,
   })
+
+  useEffect(() => {
+    invoke<IRecordingDeviceOption[]>('list_recording_devices')
+      .then((devices) => {
+        if (devices.length === 0) return
+        setRecordingDeviceOptions(devices)
+        if (!devices.some((device) => device.id === recordingDeviceId)) {
+          setRecordingDeviceId(devices[0]?.id ?? 'system-default')
+        }
+      })
+      .catch((error) => setMessage(String(error)))
+  }, [recordingDeviceId])
+
+  useEffect(() => {
+    const unlisten = listen<IRecordingLevelEvent>('recording-level', (event) => {
+      setRecordingLevel(event.payload)
+    })
+
+    return () => {
+      void unlisten.then((dispose) => dispose())
+    }
+  }, [])
+
+  useEffect(() => {
+    if (recordingState !== 'recording' || recordingStartedAt === null) return
+    const interval = window.setInterval(() => {
+      setRecordingElapsedMs(Date.now() - recordingStartedAt)
+    }, 250)
+
+    return () => window.clearInterval(interval)
+  }, [recordingStartedAt, recordingState])
 
   // _Computed
   const canTranscribe = input.trim().length > 0 && Boolean(installedModelState.selectedModelPath)
@@ -141,14 +181,12 @@ const App = () => {
   const removeInput = () => {
     setInput('')
     setTitle('')
-    clearMediaPreview()
     setMessage('Media removed')
   }
 
   const startNewTranscript = () => {
     setInput('')
     setTitle('')
-    clearMediaPreview()
     transcriptionJob.resetJob()
     setOutputPath('')
     setActiveSection('transcribe')
@@ -187,6 +225,91 @@ const App = () => {
     }
   }
 
+  const startRecording = async (force = false) => {
+    if (!force && recordingState !== 'idle') return
+    setRecordingState('saving')
+    setRecordingLevel({ peak: 0, rms: 0 })
+    setMessage('Preparing microphone')
+    try {
+      const response = await invoke<IRecordingResponse>('start_recording', {
+        request: { deviceId: recordingDeviceId },
+      })
+      setRecordingState(response.active ? 'recording' : 'idle')
+      setRecordingStartedAt(response.active ? Date.now() : null)
+      setRecordingElapsedMs(0)
+      if (response.path) setLastRecordingPath(response.path)
+      setMessage(response.message)
+    } catch (error) {
+      setRecordingState('idle')
+      setRecordingStartedAt(null)
+      setRecordingElapsedMs(0)
+      setMessage(String(error))
+    }
+  }
+
+  const stopRecording = async () => {
+    if (recordingState !== 'recording') return
+    setRecordingState('saving')
+    setMessage('Saving recording')
+    try {
+      const response = await invoke<IRecordingResponse>('stop_recording')
+      setRecordingState('review')
+      setRecordingStartedAt(null)
+      setRecordingElapsedMs(response.durationMs ?? recordingElapsedMs)
+      if (response.path) {
+        setLastRecordingPath(response.path)
+        if (!title.trim()) setTitle(getFileStem(response.path))
+      }
+      setMessage(response.path ? `${response.message}: ${response.path}` : response.message)
+    } catch (error) {
+      setRecordingState('idle')
+      setRecordingStartedAt(null)
+      setMessage(String(error))
+    }
+  }
+
+  const useRecording = () => {
+    if (!lastRecordingPath) return
+    setInput(lastRecordingPath)
+    setInputMode('file')
+    setRecordingState('idle')
+    setRecordingStartedAt(null)
+    if (!title.trim()) setTitle(getFileStem(lastRecordingPath))
+    setMessage('Recording selected for transcription')
+  }
+
+  const deleteRecordingDraft = async () => {
+    if (!lastRecordingPath) return
+    try {
+      await invoke('delete_recording', { request: { path: lastRecordingPath } })
+      if (input === lastRecordingPath) setInput('')
+      setLastRecordingPath('')
+      setRecordingState('idle')
+      setRecordingLevel({ peak: 0, rms: 0 })
+      setRecordingStartedAt(null)
+      setRecordingElapsedMs(0)
+      setMessage('Recording draft deleted')
+    } catch (error) {
+      setMessage(String(error))
+    }
+  }
+
+  const recordAgain = async () => {
+    if (lastRecordingPath) {
+      try {
+        await invoke('delete_recording', { request: { path: lastRecordingPath } })
+      } catch (error) {
+        setMessage(String(error))
+        return
+      }
+    }
+    setLastRecordingPath('')
+    setRecordingState('idle')
+    setRecordingStartedAt(null)
+    setRecordingElapsedMs(0)
+    await startRecording(true)
+  }
+
   const commonFormProps = {
     activeSection,
     canTranscribe,
@@ -199,9 +322,6 @@ const App = () => {
     installedModels: installedModelState.installedModels,
     keepTemp,
     language,
-    mediaPreview,
-    mediaPreviewError,
-    mediaPreviewLoading,
     model,
     onChangeActiveSection: setActiveSection,
     onChangeFfmpegBin: setFfmpegBin,
@@ -222,18 +342,27 @@ const App = () => {
     onDownloadModel: (id: string) => void installedModelState.downloadModel(id),
     onExportSample: () => void runSample(),
     onRemoveInput: removeInput,
+    onDeleteRecording: () => void deleteRecordingDraft(),
+    onRecordAgain: () => void recordAgain(),
+    onStartRecording: () => void startRecording(),
+    onStopRecording: () => void stopRecording(),
     onTranscribe: () => void runTranscribe(),
     onUninstallModel: (id: string) => void installedModelState.uninstallModel(id),
     outputLocation,
     outputPath,
     recordingDeviceId,
-    recordingDeviceOptions: RECORDING_DEVICE_OPTIONS,
+    recordingDeviceOptions,
+    recordingElapsedMs,
+    recordingLevel,
+    recordingPath: lastRecordingPath,
+    recordingState,
     selectedModelId,
     status: transcriptionJob.status,
     title,
     transcribeMode,
     transcribeProgress: transcriptionJob.transcribeProgress,
     uninstallingId: installedModelState.uninstallingId,
+    onUseRecording: useRecording,
     whisperBin,
   }
 

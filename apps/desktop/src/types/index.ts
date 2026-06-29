@@ -50,6 +50,18 @@ export interface IClearTempFilesResponse {
   removed: number
 }
 
+export interface IRecordingResponse {
+  active: boolean
+  path?: string | null
+  durationMs?: number | null
+  message: string
+}
+
+export interface IRecordingLevelEvent {
+  peak: number
+  rms: number
+}
+
 export interface IFormatOption {
   value: ExportFormat
   label: string
@@ -132,9 +144,4 @@ export interface ITranscribeProgressContext {
 export interface ITranscribeResultMeta {
   elapsedMs?: number | null
   wroteTo?: string | null
-}
-
-export interface IMediaPreview {
-  durationMs: number
-  peaks: number[]
 }

@@ -1,5 +1,4 @@
-import { convertFileSrc } from '@tauri-apps/api/core'
-import { type KeyboardEvent, type PointerEvent, useMemo, useRef, useState } from 'react'
+import { useState } from 'react'
 import IconDownload from '~icons/lucide/download'
 import IconFileAudio from '~icons/lucide/file-audio'
 import IconFileText from '~icons/lucide/file-text'
@@ -8,7 +7,6 @@ import IconFolderOpen from '~icons/lucide/folder-open'
 import IconInfo from '~icons/lucide/info'
 import IconMic from '~icons/lucide/mic'
 import IconPause from '~icons/lucide/pause'
-import IconPlay from '~icons/lucide/play'
 import IconShieldCheck from '~icons/lucide/shield-check'
 import IconTrash2 from '~icons/lucide/trash-2'
 import { FORMAT_OPTIONS, MODEL_CATALOG, OUTPUT_LOCATION_OPTIONS } from '../constants'
@@ -16,13 +14,14 @@ import type {
   AppSection,
   ExportFormat,
   IEngineStatus,
-  IMediaPreview,
   InputMode,
   IRecordingDeviceOption,
+  IRecordingLevelEvent,
   JobState,
   OutputLocation,
   TranscribeMode,
 } from '../types'
+import { AudioWaveformPlayer } from './audio-waveform-player'
 import { Button } from './ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { Input } from './ui/input'
@@ -40,13 +39,14 @@ interface ITranscriptFormProps {
   keepTemp: boolean
   language: string
   model: string
-  mediaPreview: IMediaPreview | null
-  mediaPreviewError: string | null
-  mediaPreviewLoading: boolean
   outputLocation: OutputLocation
   outputPath: string
   recordingDeviceId: string
   recordingDeviceOptions: IRecordingDeviceOption[]
+  recordingElapsedMs: number
+  recordingLevel: IRecordingLevelEvent
+  recordingPath: string
+  recordingState: 'idle' | 'recording' | 'saving' | 'review'
   status: JobState
   title: string
   transcribeMode: TranscribeMode
@@ -75,10 +75,22 @@ interface ITranscriptFormProps {
   onClearTempFiles: () => void
   onExportSample: () => void
   onTranscribe: () => void
+  onDeleteRecording: () => void
+  onRecordAgain: () => void
+  onStartRecording: () => void
+  onStopRecording: () => void
+  onUseRecording: () => void
   onRemoveInput: () => void
 }
 
 const getFileName = (path: string) => path.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? ''
+
+const formatClock = (durationMs: number) => {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
 
 const TranscriptForm = ({
   activeSection,
@@ -94,13 +106,14 @@ const TranscriptForm = ({
   keepTemp,
   language,
   model,
-  mediaPreview,
-  mediaPreviewError,
-  mediaPreviewLoading,
   outputLocation,
   outputPath,
   recordingDeviceId,
   recordingDeviceOptions,
+  recordingElapsedMs,
+  recordingLevel,
+  recordingPath,
+  recordingState,
   selectedModelId,
   status,
   title,
@@ -126,72 +139,16 @@ const TranscriptForm = ({
   onUninstallModel,
   onExportSample,
   onRemoveInput,
+  onDeleteRecording,
+  onRecordAgain,
+  onStartRecording,
+  onStopRecording,
   onTranscribe,
+  onUseRecording,
 }: ITranscriptFormProps) => {
   const selectedCatalogModel = MODEL_CATALOG.find((item) => item.id === selectedModelId)
   const mediaFileName = input ? getFileName(input) : ''
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false)
-  const [previewCurrentTime, setPreviewCurrentTime] = useState(0)
-  const [previewDuration, setPreviewDuration] = useState(0)
   const [showAllModels, setShowAllModels] = useState(false)
-  const audioSource = useMemo(() => (input ? convertFileSrc(input) : ''), [input])
-  const previewDurationSeconds = previewDuration || (mediaPreview?.durationMs ? mediaPreview.durationMs / 1000 : 0)
-  const previewProgressRatio = previewDurationSeconds > 0 ? previewCurrentTime / previewDurationSeconds : 0
-
-  const seekPreviewPlayback = (clientX: number, target: HTMLElement) => {
-    const audio = audioRef.current
-    const duration = audio?.duration && Number.isFinite(audio.duration) ? audio.duration : previewDurationSeconds
-    if (!audio || duration <= 0) return
-
-    const rect = target.getBoundingClientRect()
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
-    const nextTime = ratio * duration
-    audio.currentTime = nextTime
-    setPreviewCurrentTime(nextTime)
-  }
-
-  const handleWavePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    event.currentTarget.setPointerCapture(event.pointerId)
-    seekPreviewPlayback(event.clientX, event.currentTarget)
-  }
-
-  const handleWavePointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.buttons !== 1) return
-    seekPreviewPlayback(event.clientX, event.currentTarget)
-  }
-
-  const handleWaveKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const audio = audioRef.current
-    const duration = audio?.duration && Number.isFinite(audio.duration) ? audio.duration : previewDurationSeconds
-    if (!audio || duration <= 0) return
-
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      void togglePreviewPlayback()
-      return
-    }
-
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      event.preventDefault()
-      const delta = event.key === 'ArrowRight' ? 5 : -5
-      const nextTime = Math.max(0, Math.min(duration, audio.currentTime + delta))
-      audio.currentTime = nextTime
-      setPreviewCurrentTime(nextTime)
-    }
-  }
-
-  const togglePreviewPlayback = async () => {
-    const audio = audioRef.current
-    if (!audio) return
-    if (audio.paused) {
-      await audio.play()
-      setIsPreviewPlaying(true)
-    } else {
-      audio.pause()
-      setIsPreviewPlaying(false)
-    }
-  }
 
   if (activeSection === 'models') {
     const recommendedModels = MODEL_CATALOG.filter((item) => item.recommended)
@@ -423,29 +380,29 @@ const TranscriptForm = ({
     return (
       <Card className="panel-card narrow-panel">
         <CardHeader>
-          <CardTitle>Permissions</CardTitle>
-          <CardDescription>Preparation checklist for local capture and file export.</CardDescription>
+          <CardTitle>Access</CardTitle>
+          <CardDescription>What Otobun needs to record and save files locally.</CardDescription>
         </CardHeader>
         <CardContent className="settings-stack">
           <div className="permission-row">
             <IconMic />
             <div>
               <strong>Microphone</strong>
-              <p>Needed for direct recording after native capture is connected.</p>
+              <p>Used only when you press Record. Audio stays on this Mac.</p>
             </div>
-            <span className="state-chip">Setup</span>
+            <span className="state-chip is-ready">Prompt on first use</span>
           </div>
           <div className="permission-row">
             <IconFolderOpen />
             <div>
               <strong>Files and folders</strong>
-              <p>Used for media import, model files, and writing transcripts to Downloads or a selected path.</p>
+              <p>Used for imported media, downloaded models, recordings, and transcript exports.</p>
             </div>
-            <span className="state-chip is-ready">Dialog access</span>
+            <span className="state-chip is-ready">Local files</span>
           </div>
           <div className="notice-box">
             <IconShieldCheck />
-            <span>Permission checks are displayed as setup guidance until native status checks are added.</span>
+            <span>If recording does not start, check System Settings → Privacy & Security → Microphone.</span>
           </div>
         </CardContent>
       </Card>
@@ -463,7 +420,9 @@ const TranscriptForm = ({
           <div className="engine-status-card">
             <div>
               <strong>{engineStatus?.available ? 'Engine Ready' : 'Engine Missing'}</strong>
-              <p>{engineStatus?.message ?? 'Checking whisper.cpp local engine...'}</p>
+              <p>
+                {engineStatus?.available ? 'Local transcription engine is ready.' : 'Choose or install whisper-cli.'}
+              </p>
               {engineStatus?.binaryPath ? <code>{engineStatus.binaryPath}</code> : null}
             </div>
             <span className={engineStatus?.available ? 'state-chip is-ready' : 'state-chip'}>whisper.cpp local</span>
@@ -525,7 +484,7 @@ const TranscriptForm = ({
               <strong>Temporary transcription files</strong>
               <p>Remove stale Otobun temp folders left by cancelled or interrupted jobs.</p>
             </div>
-            <Button onClick={onClearTempFiles} size="sm" type="button" variant="danger">
+            <Button className="temp-cleanup-button" onClick={onClearTempFiles} size="sm" type="button" variant="danger">
               <IconTrash2 />
               Clear temp files
             </Button>
@@ -558,74 +517,17 @@ const TranscriptForm = ({
             {input ? (
               <div className="selected-source selected-source-with-preview">
                 <IconFileAudio />
-                <div>
+                <div className="selected-source-copy">
                   <strong>{mediaFileName}</strong>
                   <code>{input}</code>
-                  <div className="media-preview-strip">
-                    {/* biome-ignore lint/a11y/useMediaCaption: local source preview is controlled by the generated transcript flow */}
-                    <audio
-                      ref={audioRef}
-                      src={audioSource}
-                      onEnded={() => setIsPreviewPlaying(false)}
-                      onLoadedMetadata={(event) => {
-                        setPreviewDuration(event.currentTarget.duration)
-                        setPreviewCurrentTime(event.currentTarget.currentTime)
-                      }}
-                      onPause={() => setIsPreviewPlaying(false)}
-                      onPlay={() => setIsPreviewPlaying(true)}
-                      onTimeUpdate={(event) => setPreviewCurrentTime(event.currentTarget.currentTime)}
-                    />
-                    <Button onClick={() => void togglePreviewPlayback()} size="icon" type="button" variant="secondary">
-                      {isPreviewPlaying ? <IconPause /> : <IconPlay />}
-                    </Button>
-                    <div
-                      className="waveform-bars"
-                      role="slider"
-                      tabIndex={0}
-                      aria-label="Audio preview position"
-                      aria-valuemin={0}
-                      aria-valuemax={Math.round(previewDurationSeconds)}
-                      aria-valuenow={Math.round(previewCurrentTime)}
-                      onKeyDown={handleWaveKeyDown}
-                      onPointerDown={handleWavePointerDown}
-                      onPointerMove={handleWavePointerMove}
-                    >
-                      {mediaPreview?.peaks.map((peak, index) => {
-                        const isPlayed =
-                          mediaPreview.peaks.length > 0 && index / mediaPreview.peaks.length <= previewProgressRatio
-
-                        return (
-                          <span
-                            // biome-ignore lint/suspicious/noArrayIndexKey: waveform bars are generated in stable order
-                            key={index}
-                            className={`wave-bar wave-${Math.max(1, Math.min(10, Math.round(peak * 10)))} ${isPlayed ? 'is-played' : ''}`}
-                          />
-                        )
-                      })}
-                      {mediaPreviewLoading
-                        ? Array.from({ length: 32 }).map((_, index) => (
-                            <span
-                              // biome-ignore lint/suspicious/noArrayIndexKey: loading waveform placeholder is static
-                              key={index}
-                              className={`wave-bar wave-${(index % 6) + 2}`}
-                            />
-                          ))
-                        : null}
-                    </div>
-                    <span className="media-duration">
-                      {mediaPreview || previewDurationSeconds
-                        ? `${formatDuration(previewCurrentTime * 1000)} / ${formatDuration(previewDurationSeconds * 1000)}`
-                        : mediaPreviewLoading
-                          ? 'Analyzing…'
-                          : 'Preview'}
-                    </span>
-                  </div>
-                  {mediaPreviewError ? <span className="media-preview-error">Preview unavailable</span> : null}
                 </div>
                 <Button onClick={onRemoveInput} size="sm" type="button" variant="ghost">
                   <IconTrash2 />
                   Remove
                 </Button>
+                <div className="selected-source-player">
+                  <AudioWaveformPlayer path={input} title="Preview" />
+                </div>
               </div>
             ) : (
               <button className="file-dropzone" onClick={onChooseInput} type="button">
@@ -637,26 +539,101 @@ const TranscriptForm = ({
           </TabsContent>
 
           <TabsContent value="record">
-            <div className="record-setup">
-              <button className="record-button" type="button">
-                <IconMic />
-              </button>
-              <div>
-                <strong>Prepare recording</strong>
-                <p>Choose a microphone and confirm capture settings before native recording is connected.</p>
+            <div
+              className={
+                recordingState === 'recording'
+                  ? 'record-setup is-recording'
+                  : recordingState === 'review'
+                    ? 'record-setup is-reviewing'
+                    : 'record-setup'
+              }
+            >
+              <div className="record-header-row">
+                <button
+                  className="record-button"
+                  disabled={recordingState === 'saving' || status === 'running'}
+                  type="button"
+                  onClick={recordingState === 'recording' ? onStopRecording : onStartRecording}
+                >
+                  {recordingState === 'recording' ? <IconPause /> : <IconMic />}
+                </button>
+                <div className="record-copy">
+                  <strong>
+                    {recordingState === 'recording'
+                      ? 'Recording now'
+                      : recordingState === 'saving'
+                        ? 'Preparing recorder'
+                        : recordingState === 'review'
+                          ? 'Review recording'
+                          : 'Record local audio'}
+                  </strong>
+                  <p>
+                    {recordingState === 'recording'
+                      ? 'Speak naturally. Watch the level meter to confirm the microphone is picking you up.'
+                      : recordingState === 'review'
+                        ? 'Listen first, then use this recording or record again. Drafts are removable.'
+                        : 'Recordings save under Downloads/Otobun/Recordings. Quiet captures are level-adjusted after stop.'}
+                  </p>
+                </div>
+                <Select value={recordingDeviceId} onValueChange={onChangeRecordingDevice}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {recordingDeviceOptions.map((device) => (
+                      <SelectItem key={device.id} value={device.id}>
+                        {device.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <Select value={recordingDeviceId} onValueChange={onChangeRecordingDevice}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {recordingDeviceOptions.map((device) => (
-                    <SelectItem key={device.id} value={device.id}>
-                      {device.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="record-body-row">
+                {recordingState === 'recording' ? (
+                  <div className="recording-live-card">
+                    <div className="recording-live-side">
+                      <span className="recording-live-dot" />
+                      <div>
+                        <strong>Recording</strong>
+                        <span>{formatClock(recordingElapsedMs)}</span>
+                      </div>
+                    </div>
+                    <div className="recording-level-meter" title="Live microphone level">
+                      {Array.from({ length: 42 }).map((_, index) => {
+                        const wave = 0.45 + Math.sin(index * 0.52) * 0.22 + Math.sin(index * 1.7) * 0.12
+                        const height = 7 + Math.round(recordingLevel.rms * 58 * wave + recordingLevel.peak * 20)
+                        return (
+                          <span
+                            // biome-ignore lint/suspicious/noArrayIndexKey: decorative level bars are fixed count/order
+                            key={index}
+                            style={{ height: `${Math.max(5, Math.min(72, height))}px` }}
+                          />
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+                {recordingState === 'review' && recordingPath ? (
+                  <div className="recording-review-card">
+                    <AudioWaveformPlayer path={recordingPath} title="Listen before using" />
+                    <div className="recording-review-actions">
+                      <Button onClick={onUseRecording} size="sm" type="button">
+                        <IconFileAudio />
+                        Use this recording
+                      </Button>
+                      <Button onClick={onRecordAgain} size="sm" type="button" variant="secondary">
+                        <IconMic />
+                        Record again
+                      </Button>
+                      <Button onClick={onDeleteRecording} size="sm" type="button" variant="ghost">
+                        <IconTrash2 />
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+                {recordingPath ? <code className="path-line record-path-line">{recordingPath}</code> : null}
+              </div>
             </div>
           </TabsContent>
         </Tabs>
@@ -761,13 +738,6 @@ const TranscriptForm = ({
       </CardContent>
     </Card>
   )
-}
-
-const formatDuration = (durationMs: number) => {
-  const totalSeconds = Math.max(0, Math.round(durationMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
 export { TranscriptForm }
