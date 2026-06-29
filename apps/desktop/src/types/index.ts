@@ -13,6 +13,7 @@ export type TranscribeMode = 'single' | 'smart'
 export interface ICommandResponse {
   output: string
   wroteTo?: string | null
+  elapsedMs?: number | null
 }
 
 export interface IFormatOption {
@@ -72,6 +73,24 @@ export interface ITranscribeProgress {
   stage: string
   message: string
   percent?: number | null
+  chunkIndex?: number | null
+  chunkTotal?: number | null
+  chunkStartMs?: number | null
+  chunkEndMs?: number | null
+}
+
+export interface ITranscribeProgressContext {
+  fileName: string
+  modelName: string
+  modeLabel: string
+  languageLabel: string
+  formatLabel: string
+  outputLabel: string
+}
+
+export interface ITranscribeResultMeta {
+  elapsedMs?: number | null
+  wroteTo?: string | null
 }
 
 export interface IMediaPreview {

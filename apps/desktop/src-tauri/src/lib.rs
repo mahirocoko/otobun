@@ -3,11 +3,11 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use otobun_core::{
     export_transcript, sample_transcript, transcribe_file_with_progress, ChunkMode, ExportFormat,
-    TranscribeOptions,
+    TranscribeOptions, TranscribeProgress,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -56,6 +56,7 @@ struct MediaPreviewRequest {
 struct CommandResponse {
     output: String,
     wrote_to: Option<String>,
+    elapsed_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +100,10 @@ struct TranscribeProgressEvent {
     stage: String,
     message: String,
     percent: Option<f64>,
+    chunk_index: Option<usize>,
+    chunk_total: Option<usize>,
+    chunk_start_ms: Option<u64>,
+    chunk_end_ms: Option<u64>,
 }
 
 #[tauri::command]
@@ -211,14 +216,22 @@ fn transcribe_blocking(
     }
     options.whisper_bin = resolve_whisper_binary(request.whisper_bin.as_deref())?;
 
+    let started_at = Instant::now();
     emit_transcribe_progress(&app, "queued", "Starting transcription", Some(1.0));
     let transcript = transcribe_file_with_progress(&options, |progress| {
-        emit_transcribe_progress(&app, progress.stage, progress.message, progress.percent);
+        emit_core_transcribe_progress(&app, progress);
     })
     .map_err(|error| error.to_string())?;
     emit_transcribe_progress(&app, "exporting", "Writing transcript output", Some(98.0));
     let output = export_transcript(&transcript, format).map_err(|error| error.to_string())?;
-    let response = write_optional_output(output, request.output_path)?;
+    let mut response = write_optional_output(output, request.output_path)?;
+    response.elapsed_ms = Some(
+        started_at
+            .elapsed()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
     emit_transcribe_progress(&app, "done", "Transcript ready", Some(100.0));
     Ok(response)
 }
@@ -410,6 +423,25 @@ fn emit_transcribe_progress(
             stage: stage.to_string(),
             message: message.into(),
             percent,
+            chunk_index: None,
+            chunk_total: None,
+            chunk_start_ms: None,
+            chunk_end_ms: None,
+        },
+    );
+}
+
+fn emit_core_transcribe_progress(app: &AppHandle, progress: TranscribeProgress) {
+    let _ = app.emit(
+        "transcribe-progress",
+        TranscribeProgressEvent {
+            stage: progress.stage.to_string(),
+            message: progress.message,
+            percent: progress.percent,
+            chunk_index: progress.chunk_index,
+            chunk_total: progress.chunk_total,
+            chunk_start_ms: progress.chunk_start_ms,
+            chunk_end_ms: progress.chunk_end_ms,
         },
     );
 }
@@ -570,6 +602,7 @@ fn write_optional_output(
         return Ok(CommandResponse {
             output,
             wrote_to: None,
+            elapsed_ms: None,
         });
     };
 
@@ -587,6 +620,7 @@ fn write_optional_output(
     Ok(CommandResponse {
         output,
         wrote_to: Some(path),
+        elapsed_ms: None,
     })
 }
 

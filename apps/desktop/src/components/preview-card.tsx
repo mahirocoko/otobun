@@ -1,8 +1,11 @@
-import { useMemo, useState } from 'react'
+import { convertFileSrc } from '@tauri-apps/api/core'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import IconCopy from '~icons/lucide/copy'
 import IconFileText from '~icons/lucide/file-text'
+import IconPause from '~icons/lucide/pause'
+import IconPlay from '~icons/lucide/play'
 import IconRotateCcw from '~icons/lucide/rotate-ccw'
-import type { ExportFormat } from '../types'
+import type { ExportFormat, ITranscribeResultMeta } from '../types'
 import { Button } from './ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
@@ -10,18 +13,54 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
 interface IPreviewCardProps {
   output: string
   format: ExportFormat
+  input: string
+  meta: ITranscribeResultMeta
   onCopy: () => void
   onNewTranscript: () => void
 }
 
 interface ISegment {
   time: string
+  startMs: number | null
   speaker: string
   text: string
 }
 
-const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardProps) => {
+const formatClock = (durationSeconds: number) => {
+  const totalSeconds = Math.max(0, Math.round(durationSeconds))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
+const formatElapsed = (durationMs?: number | null) => {
+  if (!durationMs) return null
+  return formatClock(durationMs / 1000)
+}
+
+const parseCompactTimestamp = (value: string) => {
+  const parts = value.split(':').map((part) => Number.parseInt(part, 10))
+  if (parts.some((part) => Number.isNaN(part))) return null
+  if (parts.length === 2) return (parts[0] * 60 + parts[1]) * 1000
+  if (parts.length === 3) return ((parts[0] * 60 + parts[1]) * 60 + parts[2]) * 1000
+  return null
+}
+
+const formatSegmentTime = (startMs: number) => {
+  const seconds = Math.floor(startMs / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`
+}
+
+const PreviewCard = ({ output, format, input, meta, onCopy, onNewTranscript }: IPreviewCardProps) => {
   const [viewMode, setViewMode] = useState<'reader' | 'source'>('reader')
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0)
+  const [audioDuration, setAudioDuration] = useState(0)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const rowRefs = useRef<Array<HTMLElement | null>>([])
+  const audioSource = useMemo(() => (input ? convertFileSrc(input) : ''), [input])
 
   const parsedSegments = useMemo<ISegment[]>(() => {
     if (!output.trim()) return []
@@ -40,12 +79,10 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
               text?: string
             }) => {
               const startMs = segment.start_ms ?? (segment.start ? Math.round(segment.start * 1000) : 0)
-              const seconds = Math.floor(startMs / 1000)
-              const minutes = Math.floor(seconds / 60)
-              const remainingSeconds = seconds % 60
 
               return {
-                time: `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`,
+                time: formatSegmentTime(startMs),
+                startMs,
                 speaker: segment.speaker || 'Transcript',
                 text: segment.text || '',
               }
@@ -61,15 +98,17 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
           .map((block) => {
             const lines = block.split('\n').filter(Boolean)
             if (lines.length >= 3) {
-              const match = lines[1].match(/(\d{2}):(\d{2}):(\d{2})/)
+              const match = lines[1].match(/(\d{2}:\d{2}:\d{2})/)
+              const startMs = match ? parseCompactTimestamp(match[1]) : null
               return {
-                time: match ? `${match[2]}:${match[3]}` : '00:00',
+                time: startMs === null ? '00:00' : formatSegmentTime(startMs),
+                startMs,
                 speaker: 'Transcript',
                 text: lines.slice(2).join(' '),
               }
             }
 
-            return { time: '00:00', speaker: 'Transcript', text: block }
+            return { time: '00:00', startMs: null, speaker: 'Transcript', text: block }
           })
       }
 
@@ -83,15 +122,17 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
             if (lines.length >= 2) {
               const timeLine = lines[0].includes('-->') ? lines[0] : lines[1] || ''
               const textLines = lines[0].includes('-->') ? lines.slice(1) : lines.slice(2)
-              const match = timeLine.match(/(\d{2}):(\d{2}):(\d{2})/)
+              const match = timeLine.match(/(\d{2}:\d{2}:\d{2})/)
+              const startMs = match ? parseCompactTimestamp(match[1]) : null
               return {
-                time: match ? `${match[2]}:${match[3]}` : '00:00',
+                time: startMs === null ? '00:00' : formatSegmentTime(startMs),
+                startMs,
                 speaker: 'Transcript',
                 text: textLines.join(' '),
               }
             }
 
-            return { time: '00:00', speaker: 'Transcript', text: block }
+            return { time: '00:00', startMs: null, speaker: 'Transcript', text: block }
           })
       }
 
@@ -114,8 +155,10 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
           const currentMarkdownMatch = line.match(/^\*\*(.*?)\*\*\s+`?(\d{2}:\d{2})`?\s*(.*)$/)
           if (currentMarkdownMatch) {
             commitSegment()
+            const startMs = parseCompactTimestamp(currentMarkdownMatch[2])
             currentSegment = {
               time: currentMarkdownMatch[2],
+              startMs,
               speaker: currentMarkdownMatch[1].trim() || 'Transcript',
               text: currentMarkdownMatch[3].trim(),
             }
@@ -125,8 +168,10 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
           const legacyMarkdownMatch = line.match(/-\s+\*\*([^[]*?)\[?(\d{2}:\d{2})\]?\*\*:\s*(.*)/)
           if (legacyMarkdownMatch) {
             commitSegment()
+            const startMs = parseCompactTimestamp(legacyMarkdownMatch[2])
             segments.push({
               time: legacyMarkdownMatch[2],
+              startMs,
               speaker: legacyMarkdownMatch[1].trim() || 'Transcript',
               text: legacyMarkdownMatch[3].trim(),
             })
@@ -148,8 +193,39 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
     return output
       .split('\n')
       .filter((line) => line.trim())
-      .map((line) => ({ time: '--:--', speaker: 'Transcript', text: line }))
+      .map((line) => ({ time: '--:--', startMs: null, speaker: 'Transcript', text: line }))
   }, [output, format])
+
+  const activeSegmentIndex = useMemo(() => {
+    const currentMs = audioCurrentTime * 1000
+    let activeIndex = -1
+
+    for (let index = 0; index < parsedSegments.length; index += 1) {
+      const segment = parsedSegments[index]
+      if (segment.startMs === null || segment.startMs > currentMs) continue
+      activeIndex = index
+    }
+
+    return activeIndex
+  }, [audioCurrentTime, parsedSegments])
+
+  useEffect(() => {
+    if (!isPlaying || viewMode !== 'reader' || activeSegmentIndex < 0) return
+    rowRefs.current[activeSegmentIndex]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [activeSegmentIndex, isPlaying, viewMode])
+
+  const togglePlayback = async () => {
+    const audio = audioRef.current
+    if (!audio) return
+
+    if (audio.paused) {
+      await audio.play()
+    } else {
+      audio.pause()
+    }
+  }
+
+  const progressRatio = audioDuration > 0 ? audioCurrentTime / audioDuration : 0
 
   return (
     <Card className="preview-card">
@@ -157,6 +233,10 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
         <div>
           <CardTitle>Output</CardTitle>
           <p className="preview-subtitle">Review the transcript result, then start another pass when ready.</p>
+          <div className="result-meta-row">
+            {formatElapsed(meta.elapsedMs) ? <span>Transcribed in {formatElapsed(meta.elapsedMs)}</span> : null}
+            {meta.wroteTo ? <span>Saved to {meta.wroteTo}</span> : null}
+          </div>
         </div>
         <div className="preview-actions">
           <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'reader' | 'source')}>
@@ -177,25 +257,61 @@ const PreviewCard = ({ output, format, onCopy, onNewTranscript }: IPreviewCardPr
       </CardHeader>
       <CardContent className="preview-body">
         {output ? (
-          <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'reader' | 'source')}>
-            <TabsContent value="reader">
-              <div className="reader-list">
-                {parsedSegments.map((segment, index) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: preview order is static for current output
-                  <article className="reader-row" key={`${segment.time}-${index}`}>
-                    <div className="reader-row-meta">
-                      <span>{segment.speaker}</span>
-                      <code>{segment.time}</code>
-                    </div>
-                    <p>{segment.text}</p>
-                  </article>
-                ))}
+          <>
+            {audioSource ? (
+              <div className="result-audio-player">
+                {/* biome-ignore lint/a11y/useMediaCaption: source audio is paired with the generated transcript reader */}
+                <audio
+                  ref={audioRef}
+                  src={audioSource}
+                  onEnded={() => setIsPlaying(false)}
+                  onLoadedMetadata={(event) => {
+                    setAudioDuration(event.currentTarget.duration || 0)
+                    setAudioCurrentTime(event.currentTarget.currentTime || 0)
+                  }}
+                  onPause={() => setIsPlaying(false)}
+                  onPlay={() => setIsPlaying(true)}
+                  onTimeUpdate={(event) => setAudioCurrentTime(event.currentTarget.currentTime || 0)}
+                />
+                <Button onClick={() => void togglePlayback()} size="icon" type="button" variant="secondary">
+                  {isPlaying ? <IconPause /> : <IconPlay />}
+                </Button>
+                <div className="result-audio-timeline">
+                  <span className="progress-track" aria-label="Audio playback progress" role="progressbar">
+                    <span style={{ width: `${Math.max(0, Math.min(100, progressRatio * 100))}%` }} />
+                  </span>
+                  <span>
+                    {formatClock(audioCurrentTime)} / {audioDuration > 0 ? formatClock(audioDuration) : '--:--'}
+                  </span>
+                </div>
               </div>
-            </TabsContent>
-            <TabsContent value="source">
-              <textarea className="raw-output" readOnly value={output} />
-            </TabsContent>
-          </Tabs>
+            ) : null}
+            <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'reader' | 'source')}>
+              <TabsContent value="reader">
+                <div className="reader-list">
+                  {parsedSegments.map((segment, index) => (
+                    <article
+                      className={index === activeSegmentIndex ? 'reader-row is-active' : 'reader-row'}
+                      // biome-ignore lint/suspicious/noArrayIndexKey: preview order is static for current output
+                      key={`${segment.time}-${index}`}
+                      ref={(node) => {
+                        rowRefs.current[index] = node
+                      }}
+                    >
+                      <div className="reader-row-meta">
+                        <span>{segment.speaker}</span>
+                        <code>{segment.time}</code>
+                      </div>
+                      <p>{segment.text}</p>
+                    </article>
+                  ))}
+                </div>
+              </TabsContent>
+              <TabsContent value="source">
+                <textarea className="raw-output" readOnly value={output} />
+              </TabsContent>
+            </Tabs>
+          </>
         ) : (
           <div className="empty-state">
             <IconFileText />

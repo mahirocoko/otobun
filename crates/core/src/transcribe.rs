@@ -14,6 +14,10 @@ pub struct TranscribeProgress {
     pub stage: &'static str,
     pub message: String,
     pub percent: Option<f64>,
+    pub chunk_index: Option<usize>,
+    pub chunk_total: Option<usize>,
+    pub chunk_start_ms: Option<u64>,
+    pub chunk_end_ms: Option<u64>,
 }
 
 impl TranscribeProgress {
@@ -22,7 +26,19 @@ impl TranscribeProgress {
             stage,
             message: message.into(),
             percent,
+            chunk_index: None,
+            chunk_total: None,
+            chunk_start_ms: None,
+            chunk_end_ms: None,
         }
+    }
+
+    fn with_chunk(mut self, index: usize, total: usize, chunk: AudioChunk) -> Self {
+        self.chunk_index = Some(index);
+        self.chunk_total = Some(total);
+        self.chunk_start_ms = Some(chunk.start_ms);
+        self.chunk_end_ms = Some(chunk.end_ms);
+        self
     }
 }
 
@@ -207,6 +223,7 @@ fn run_whisper<F>(
     progress_start: f64,
     progress_span: f64,
     progress_message: String,
+    chunk_context: Option<(usize, usize, AudioChunk)>,
 ) -> Result<(), TranscribeError>
 where
     F: FnMut(TranscribeProgress),
@@ -215,11 +232,15 @@ where
         .map(|count| count.get().saturating_sub(1).clamp(4, 8))
         .unwrap_or(4);
 
-    on_progress(TranscribeProgress::new(
+    let initial_progress = TranscribeProgress::new(
         "transcribing",
         format!("{progress_message} with {thread_count} threads"),
         Some(progress_start),
-    ));
+    );
+    on_progress(match chunk_context {
+        Some((index, total, chunk)) => initial_progress.with_chunk(index, total, chunk),
+        None => initial_progress,
+    });
 
     let mut command = Command::new(&options.whisper_bin);
     command
@@ -260,11 +281,15 @@ where
                 stderr_output.push('\n');
             }
             if let Some(percent) = parse_whisper_progress(&line) {
-                on_progress(TranscribeProgress::new(
+                let progress_update = TranscribeProgress::new(
                     "transcribing",
                     progress_message.clone(),
                     Some(progress_start + (percent * progress_span / 100.0)),
-                ));
+                );
+                on_progress(match chunk_context {
+                    Some((index, total, chunk)) => progress_update.with_chunk(index, total, chunk),
+                    None => progress_update,
+                });
             }
         }
     }
@@ -277,11 +302,15 @@ where
         });
     }
 
-    on_progress(TranscribeProgress::new(
+    let finished_progress = TranscribeProgress::new(
         "transcribing",
         "whisper.cpp finished",
         Some(progress_start + progress_span),
-    ));
+    );
+    on_progress(match chunk_context {
+        Some((index, total, chunk)) => finished_progress.with_chunk(index, total, chunk),
+        None => finished_progress,
+    });
     Ok(())
 }
 
@@ -316,6 +345,7 @@ where
         22.0,
         72.0,
         "Running whisper.cpp".to_string(),
+        None,
     )?;
     on_progress(TranscribeProgress::new(
         "parsing",
@@ -347,17 +377,6 @@ where
     F: FnMut(TranscribeProgress),
 {
     let duration_ms = wav_duration_ms(normalized_wav)?;
-    if duration_ms <= 10 * 60 * 1000 {
-        let whisper_output_base = temp_dir.join("transcript");
-        let whisper_output_json = temp_dir.join("transcript.json");
-        return transcribe_single_pass(
-            options,
-            normalized_wav,
-            &whisper_output_base,
-            &whisper_output_json,
-            on_progress,
-        );
-    }
 
     on_progress(TranscribeProgress::new(
         "chunking",
@@ -377,11 +396,14 @@ where
         let base_progress = 22.0 + ((index as f64 / total_chunks as f64) * 72.0);
         let span = 72.0 / total_chunks as f64;
 
-        on_progress(TranscribeProgress::new(
-            "chunking",
-            format!("Preparing chunk {chunk_number}/{total_chunks}"),
-            Some(base_progress),
-        ));
+        on_progress(
+            TranscribeProgress::new(
+                "chunking",
+                format!("Preparing chunk {chunk_number}/{total_chunks}"),
+                Some(base_progress),
+            )
+            .with_chunk(chunk_number, total_chunks, *chunk),
+        );
         extract_chunk(options, normalized_wav, &chunk_path, *chunk)?;
         run_whisper(
             options,
@@ -391,6 +413,7 @@ where
             base_progress,
             span * 0.92,
             format!("Transcribing chunk {chunk_number}/{total_chunks}"),
+            Some((chunk_number, total_chunks, *chunk)),
         )?;
         let mut chunk_transcript = parse_whisper_output_file(options, &output_json)?;
         for segment in &mut chunk_transcript.segments {
@@ -426,11 +449,28 @@ fn detect_silence_boundaries(
     options: &TranscribeOptions,
     input_wav: &Path,
 ) -> Result<Vec<u64>, TranscribeError> {
+    for (noise, duration) in [("-35dB", "0.6"), ("-40dB", "0.35"), ("-30dB", "0.9")] {
+        let boundaries = detect_silence_boundaries_with(options, input_wav, noise, duration)?;
+        if !boundaries.is_empty() {
+            return Ok(boundaries);
+        }
+    }
+
+    Ok(Vec::new())
+}
+
+fn detect_silence_boundaries_with(
+    options: &TranscribeOptions,
+    input_wav: &Path,
+    noise: &str,
+    duration: &str,
+) -> Result<Vec<u64>, TranscribeError> {
+    let filter = format!("silencedetect=noise={noise}:d={duration}");
     let output = Command::new(&options.ffmpeg_bin)
         .arg("-i")
         .arg(input_wav)
         .arg("-af")
-        .arg("silencedetect=noise=-35dB:d=0.6")
+        .arg(filter)
         .arg("-f")
         .arg("null")
         .arg("-")
@@ -467,9 +507,9 @@ fn parse_silence_value(line: &str, marker: &str) -> Option<f64> {
 }
 
 fn plan_chunks(duration_ms: u64, silence_boundaries: &[u64]) -> Vec<AudioChunk> {
-    const TARGET_MS: u64 = 5 * 60 * 1000;
-    const MIN_MS: u64 = 2 * 60 * 1000;
-    const MAX_MS: u64 = 8 * 60 * 1000;
+    const TARGET_MS: u64 = 3 * 60 * 1000;
+    const MIN_MS: u64 = 75 * 1000;
+    const MAX_MS: u64 = 4 * 60 * 1000;
 
     let mut chunks = Vec::new();
     let mut start = 0_u64;
@@ -497,6 +537,15 @@ fn plan_chunks(duration_ms: u64, silence_boundaries: &[u64]) -> Vec<AudioChunk> 
             start_ms: start,
             end_ms: duration_ms,
         });
+    }
+
+    if chunks.len() > 1 {
+        let last_index = chunks.len() - 1;
+        if chunks[last_index].duration_ms() < MIN_MS {
+            let last_end = chunks[last_index].end_ms;
+            chunks[last_index - 1].end_ms = last_end;
+            chunks.pop();
+        }
     }
 
     chunks

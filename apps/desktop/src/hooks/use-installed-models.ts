@@ -22,9 +22,8 @@ const useInstalledModels = ({
   selectedModelId,
 }: IUseInstalledModelsOptions) => {
   const [installedModels, setInstalledModels] = useState<Record<string, string>>({})
-  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [downloadingModels, setDownloadingModels] = useState<Record<string, number>>({})
   const [uninstallingId, setUninstallingId] = useState<string | null>(null)
-  const [downloadProgress, setDownloadProgress] = useState(0)
 
   useEffect(() => {
     const syncInstalledModels = async () => {
@@ -50,7 +49,8 @@ const useInstalledModels = ({
   useEffect(() => {
     const unlisten = listen<IModelDownloadProgress>('model-download-progress', (event) => {
       const progress = event.payload.percent ?? (event.payload.state === 'starting' ? 2 : 10)
-      setDownloadProgress(Math.max(0, Math.min(100, Math.round(progress / 10) * 10)))
+      const roundedProgress = Math.max(0, Math.min(100, Math.round(progress / 10) * 10))
+      setDownloadingModels((current) => ({ ...current, [event.payload.modelId]: roundedProgress }))
     })
 
     return () => {
@@ -62,8 +62,9 @@ const useInstalledModels = ({
     const catalogItem = MODEL_CATALOG.find((item) => item.id === id)
     if (!catalogItem) return
 
-    setDownloadingId(id)
-    setDownloadProgress(0)
+    if (downloadingModels[id] !== undefined) return
+
+    setDownloadingModels((current) => ({ ...current, [id]: 0 }))
     onMessage(`Downloading ${catalogItem.name}`)
 
     try {
@@ -72,13 +73,16 @@ const useInstalledModels = ({
       })
       setInstalledModels((current) => ({ ...current, [response.id]: response.path }))
       onSelectModel(response.id)
-      setDownloadProgress(100)
+      setDownloadingModels((current) => ({ ...current, [response.id]: 100 }))
       onMessage(`${catalogItem.name} installed`)
     } catch (error) {
       onError(String(error))
     } finally {
-      setDownloadingId(null)
-      setDownloadProgress(0)
+      setDownloadingModels((current) => {
+        const nextModels = { ...current }
+        delete nextModels[id]
+        return nextModels
+      })
     }
   }
 
@@ -109,8 +113,7 @@ const useInstalledModels = ({
 
   return {
     downloadModel,
-    downloadingId,
-    downloadProgress,
+    downloadingModels,
     installedModels,
     selectedModelPath: selectedModelId === 'custom' ? customModelPath.trim() : installedModels[selectedModelId],
     uninstallingId,

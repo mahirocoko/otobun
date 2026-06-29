@@ -29,6 +29,7 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
   const [output, setOutput] = useState('')
   const [status, setStatus] = useState<JobState>('idle')
   const [transcribeProgress, setTranscribeProgress] = useState<ITranscribeProgress | null>(null)
+  const [resultMeta, setResultMeta] = useState({ elapsedMs: null as number | null, wroteTo: null as string | null })
 
   useEffect(() => {
     const unlisten = listen<ITranscribeProgress>('transcribe-progress', (event) => {
@@ -47,6 +48,7 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
     outputPath,
   }: Pick<IRunTranscribeInput, 'format' | 'input' | 'outputLocation' | 'outputPath'>) => {
     setOutput('')
+    setResultMeta({ elapsedMs: null, wroteTo: null })
     setTranscribeProgress({ stage: 'sample', message: 'Generating sample transcript', percent: 20 })
     setStatus('running')
     onMessage('Generating sample')
@@ -57,6 +59,7 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
         request: { format, outputPath: finalOutputPath },
       })
       setOutput(response.output)
+      setResultMeta({ elapsedMs: response.elapsedMs ?? null, wroteTo: response.wroteTo ?? null })
       setStatus('done')
       setTranscribeProgress(null)
       onMessage(response.wroteTo ? `Saved to ${response.wroteTo}` : 'Sample loaded')
@@ -75,6 +78,7 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
     }
 
     setOutput('')
+    setResultMeta({ elapsedMs: null, wroteTo: null })
     setTranscribeProgress({ stage: 'queued', message: 'Starting transcription', percent: 1 })
     setStatus('running')
     onMessage('Transcribing locally')
@@ -98,6 +102,7 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
         },
       })
       setOutput(response.output)
+      setResultMeta({ elapsedMs: response.elapsedMs ?? null, wroteTo: response.wroteTo ?? null })
       setStatus('done')
       setTranscribeProgress(null)
       onMessage(response.wroteTo ? `Saved to ${response.wroteTo}` : 'Transcription complete')
@@ -116,11 +121,12 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
 
   const resetJob = () => {
     setOutput('')
+    setResultMeta({ elapsedMs: null, wroteTo: null })
     setStatus('idle')
     setTranscribeProgress(null)
   }
 
-  return { copyOutput, output, resetJob, runSample, runTranscribe, setStatus, status, transcribeProgress }
+  return { copyOutput, output, resetJob, resultMeta, runSample, runTranscribe, setStatus, status, transcribeProgress }
 }
 
 export type { IRunTranscribeInput }

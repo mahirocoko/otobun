@@ -2,6 +2,8 @@ import { downloadDir } from '@tauri-apps/api/path'
 import { FORMAT_OPTIONS } from '../constants'
 import type { ExportFormat, OutputLocation } from '../types'
 
+const getFileName = (path: string) => path.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? ''
+
 const getFileStem = (path: string) => {
   const name = path.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? ''
   return name.replace(/\.[^.]+$/, '')
@@ -32,4 +34,4 @@ const resolveDefaultOutputPath = async (input: string, format: ExportFormat, out
   return `${downloadsPath}/Otobun/${fileName}`
 }
 
-export { getFileStem, getSourceFolder, getSuggestedOutputName, resolveDefaultOutputPath }
+export { getFileName, getFileStem, getSourceFolder, getSuggestedOutputName, resolveDefaultOutputPath }

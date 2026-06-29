@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react'
-import type { ITranscribeProgress } from '../../types'
+import type { ITranscribeProgress, ITranscribeProgressContext, ITranscribeResultMeta } from '../../types'
 import { PreviewCard } from '../preview-card'
 import { TranscriptForm } from '../transcript-form'
 import { TranscribeProgressScreen } from './transcribe-progress-screen'
@@ -8,19 +8,35 @@ type ITranscriptFormProps = ComponentProps<typeof TranscriptForm>
 
 type ITranscribeWorkspaceProps = ITranscriptFormProps & {
   output: string
+  progressContext: ITranscribeProgressContext
+  resultMeta: ITranscribeResultMeta
   transcribeProgress: ITranscribeProgress | null
   onCopyOutput: () => void
   onNewTranscript: () => void
 }
 
-const TranscribeWorkspace = ({ output, onCopyOutput, onNewTranscript, ...formProps }: ITranscribeWorkspaceProps) => {
+const TranscribeWorkspace = ({
+  output,
+  progressContext,
+  resultMeta,
+  onCopyOutput,
+  onNewTranscript,
+  ...formProps
+}: ITranscribeWorkspaceProps) => {
   if (formProps.status === 'running') {
-    return <TranscribeProgressScreen progress={formProps.transcribeProgress} />
+    return <TranscribeProgressScreen context={progressContext} progress={formProps.transcribeProgress} />
   }
 
   if (output) {
     return (
-      <PreviewCard format={formProps.format} output={output} onCopy={onCopyOutput} onNewTranscript={onNewTranscript} />
+      <PreviewCard
+        format={formProps.format}
+        input={formProps.input}
+        meta={resultMeta}
+        output={output}
+        onCopy={onCopyOutput}
+        onNewTranscript={onNewTranscript}
+      />
     )
   }
 

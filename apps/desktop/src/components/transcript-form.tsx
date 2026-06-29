@@ -53,9 +53,8 @@ interface ITranscriptFormProps {
   whisperBin: string
   selectedModelId: string
   installedModels: Record<string, string>
-  downloadingId: string | null
+  downloadingModels: Record<string, number>
   uninstallingId: string | null
-  downloadProgress: number
   onChangeSelectedModelId: (value: string) => void
   onDownloadModel: (id: string) => void
   onUninstallModel: (id: string) => void
@@ -83,8 +82,7 @@ const getFileName = (path: string) => path.replaceAll('\\', '/').split('/').filt
 const TranscriptForm = ({
   activeSection,
   canTranscribe,
-  downloadProgress,
-  downloadingId,
+  downloadingModels,
   uninstallingId,
   engineStatus,
   ffmpegBin,
@@ -227,7 +225,8 @@ const TranscriptForm = ({
               const isSelected = selectedModelId === item.id
               const installedPath = installedModels[item.id]
               const isInstalled = Boolean(installedPath)
-              const isDownloading = downloadingId === item.id
+              const downloadProgress = downloadingModels[item.id]
+              const isDownloading = downloadProgress !== undefined
               const isUninstalling = uninstallingId === item.id
 
               return (
@@ -236,6 +235,7 @@ const TranscriptForm = ({
                     <strong>{item.name}</strong>
                     <div className="model-head-meta">
                       {isSelected ? <span className="state-chip is-selected-chip">Selected</span> : null}
+                      {item.recommended ? <span className="state-chip is-recommended-chip">Recommended</span> : null}
                       <span>{item.sizeMb} MB</span>
                     </div>
                   </div>

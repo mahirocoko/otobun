@@ -1058,6 +1058,11 @@ button:disabled {
   color: var(--primary);
 }
 
+.state-chip.is-recommended-chip {
+  border-color: rgba(120, 201, 156, 0.38);
+  color: #78c99c;
+}
+
 .transcribe-progress-card {
   display: grid;
   gap: 12px;
@@ -1328,4 +1333,121 @@ button:disabled {
   to {
     transform: rotate(360deg);
   }
+}
+
+.result-meta-row {
+  display: flex;
+  max-width: 620px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+}
+
+.result-meta-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-context-grid {
+  display: grid;
+  width: min(680px, 100%);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  text-align: left;
+}
+
+.progress-context-grid span,
+.chunk-progress-panel > div:first-child span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-context-grid strong {
+  margin-left: 4px;
+  color: var(--foreground);
+  font-weight: 720;
+}
+
+.chunk-progress-panel {
+  display: grid;
+  width: min(680px, 100%);
+  gap: 10px;
+}
+
+.chunk-progress-panel > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chunk-progress-panel > div:first-child strong {
+  color: var(--foreground);
+  font-size: 0.84rem;
+}
+
+.chunk-rail {
+  display: grid;
+  grid-auto-columns: minmax(12px, 1fr);
+  grid-auto-flow: column;
+  gap: 4px;
+}
+
+.chunk-rail span {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--input);
+}
+
+.chunk-rail span.is-done {
+  background: color-mix(in srgb, var(--primary), var(--muted-foreground) 20%);
+}
+
+.chunk-rail span.is-active {
+  background: var(--primary);
+  box-shadow: 0 0 0 2px rgba(255, 106, 74, 0.14);
+}
+
+@media (max-width: 760px) {
+  .progress-context-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.result-audio-player {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-elevated);
+  padding: 10px;
+}
+
+.result-audio-player audio {
+  display: none;
+}
+
+.result-audio-timeline {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.reader-row.is-active {
+  border-color: color-mix(in srgb, var(--primary), transparent 25%);
+  background: color-mix(in srgb, var(--primary), var(--card-elevated) 88%);
+  box-shadow: inset 3px 0 0 var(--primary);
 }

@@ -4,14 +4,20 @@ import { AppSidebar } from './components/app-sidebar'
 import { HeroCard } from './components/hero-card'
 import { TranscribeWorkspace } from './components/transcribe/transcribe-workspace'
 import { TranscriptForm } from './components/transcript-form'
-import { FORMAT_OPTIONS, MEDIA_EXTENSIONS, MODEL_EXTENSIONS, RECORDING_DEVICE_OPTIONS } from './constants'
+import {
+  FORMAT_OPTIONS,
+  MEDIA_EXTENSIONS,
+  MODEL_CATALOG,
+  MODEL_EXTENSIONS,
+  RECORDING_DEVICE_OPTIONS,
+} from './constants'
 import { useEngineStatus } from './hooks/use-engine-status'
 import { useInstalledModels } from './hooks/use-installed-models'
 import { useMediaPreview } from './hooks/use-media-preview'
 import { useModelPreference, writeModelPreference } from './hooks/use-model-preference'
 import { useTranscriptionJob } from './hooks/use-transcription-job'
 import type { AppSection, ExportFormat, InputMode, OutputLocation, TranscribeMode } from './types'
-import { getFileStem, resolveDefaultOutputPath } from './utils/paths'
+import { getFileName, getFileStem, resolveDefaultOutputPath } from './utils/paths'
 
 const App = () => {
   // _State
@@ -59,6 +65,24 @@ const App = () => {
       : activeSection === 'transcribe'
         ? 'workspace-flow'
         : 'workspace-single'
+
+  const selectedCatalogModel = MODEL_CATALOG.find((item) => item.id === selectedModelId)
+  const progressContext = {
+    fileName: getFileName(input),
+    modelName:
+      selectedModelId === 'custom'
+        ? getFileName(model) || 'Custom model'
+        : selectedCatalogModel?.name || 'Selected model',
+    modeLabel: transcribeMode === 'smart' ? 'Smart chunks' : 'Single pass',
+    languageLabel: language === 'mixed-th-en' ? 'Thai / English' : language === 'auto' ? 'Auto detect' : language,
+    formatLabel: selectedFormat?.label ?? format.toUpperCase(),
+    outputLabel:
+      outputLocation === 'downloads'
+        ? 'Downloads / Otobun'
+        : outputLocation === 'source-folder'
+          ? 'Source folder'
+          : 'Custom path',
+  }
 
   // _Dialog
   const chooseInput = async () => {
@@ -149,8 +173,7 @@ const App = () => {
   const commonFormProps = {
     activeSection,
     canTranscribe,
-    downloadProgress: installedModelState.downloadProgress,
-    downloadingId: installedModelState.downloadingId,
+    downloadingModels: installedModelState.downloadingModels,
     engineStatus,
     ffmpegBin,
     format,
@@ -207,6 +230,8 @@ const App = () => {
             <TranscribeWorkspace
               {...commonFormProps}
               output={transcriptionJob.output}
+              progressContext={progressContext}
+              resultMeta={transcriptionJob.resultMeta}
               onCopyOutput={() => void transcriptionJob.copyOutput()}
               onNewTranscript={startNewTranscript}
             />
