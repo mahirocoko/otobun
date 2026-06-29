@@ -1,10 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   ExportFormat,
+  ICancelTranscribeResponse,
   ICommandResponse,
+  ITranscribeActivityItem,
   ITranscribeProgress,
+  ITranscript,
   JobState,
   OutputLocation,
   TranscribeMode,
@@ -27,13 +30,44 @@ interface IRunTranscribeInput {
 
 const useTranscriptionJob = (onMessage: (message: string) => void) => {
   const [output, setOutput] = useState('')
+  const [transcript, setTranscript] = useState<ITranscript | null>(null)
   const [status, setStatus] = useState<JobState>('idle')
+  const [isCancelling, setIsCancelling] = useState(false)
   const [transcribeProgress, setTranscribeProgress] = useState<ITranscribeProgress | null>(null)
+  const [activityLog, setActivityLog] = useState<ITranscribeActivityItem[]>([])
   const [resultMeta, setResultMeta] = useState({ elapsedMs: null as number | null, wroteTo: null as string | null })
+  const lastActivityKeyRef = useRef('')
+
+  const pushActivity = (label: string, detail?: string) => {
+    const key = `${label}:${detail ?? ''}`
+    if (lastActivityKeyRef.current === key) return
+    lastActivityKeyRef.current = key
+    setActivityLog((items) => [
+      ...items.slice(-7),
+      {
+        id: `${Date.now()}-${items.length}`,
+        label,
+        detail,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      },
+    ])
+  }
+
+  const resetActivity = (label: string, detail?: string) => {
+    lastActivityKeyRef.current = ''
+    setActivityLog([])
+    pushActivity(label, detail)
+  }
 
   useEffect(() => {
     const unlisten = listen<ITranscribeProgress>('transcribe-progress', (event) => {
-      setTranscribeProgress(event.payload)
+      const progress = event.payload
+      setTranscribeProgress(progress)
+      const chunkDetail =
+        progress.chunkIndex && progress.chunkTotal
+          ? `Chunk ${progress.chunkIndex} of ${progress.chunkTotal}`
+          : undefined
+      pushActivity(progress.message, chunkDetail)
     })
 
     return () => {
@@ -48,8 +82,11 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
     outputPath,
   }: Pick<IRunTranscribeInput, 'format' | 'input' | 'outputLocation' | 'outputPath'>) => {
     setOutput('')
+    setTranscript(null)
     setResultMeta({ elapsedMs: null, wroteTo: null })
     setTranscribeProgress({ stage: 'sample', message: 'Generating sample transcript', percent: 20 })
+    resetActivity('Generating sample transcript')
+    setIsCancelling(false)
     setStatus('running')
     onMessage('Generating sample')
 
@@ -59,13 +96,18 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
         request: { format, outputPath: finalOutputPath },
       })
       setOutput(response.output)
+      setTranscript(response.transcript ?? null)
       setResultMeta({ elapsedMs: response.elapsedMs ?? null, wroteTo: response.wroteTo ?? null })
       setStatus('done')
       setTranscribeProgress(null)
+      setIsCancelling(false)
+      pushActivity(response.wroteTo ? 'Sample saved' : 'Sample ready', response.wroteTo ?? undefined)
       onMessage(response.wroteTo ? `Saved to ${response.wroteTo}` : 'Sample loaded')
     } catch (error) {
       setStatus('error')
       setTranscribeProgress(null)
+      setIsCancelling(false)
+      pushActivity('Sample failed', String(error))
       onMessage(String(error))
     }
   }
@@ -78,8 +120,11 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
     }
 
     setOutput('')
+    setTranscript(null)
     setResultMeta({ elapsedMs: null, wroteTo: null })
     setTranscribeProgress({ stage: 'queued', message: 'Starting transcription', percent: 1 })
+    resetActivity('Starting transcription')
+    setIsCancelling(false)
     setStatus('running')
     onMessage('Transcribing locally')
 
@@ -102,13 +147,53 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
         },
       })
       setOutput(response.output)
+      setTranscript(response.transcript ?? null)
       setResultMeta({ elapsedMs: response.elapsedMs ?? null, wroteTo: response.wroteTo ?? null })
       setStatus('done')
       setTranscribeProgress(null)
+      setIsCancelling(false)
+      pushActivity(response.wroteTo ? 'Transcript saved' : 'Transcript ready', response.wroteTo ?? undefined)
       onMessage(response.wroteTo ? `Saved to ${response.wroteTo}` : 'Transcription complete')
     } catch (error) {
+      if (String(error).toLowerCase().includes('cancelled')) {
+        setStatus('idle')
+        setTranscribeProgress(null)
+        setIsCancelling(false)
+        pushActivity('Transcription cancelled')
+        onMessage('Transcription cancelled')
+        return
+      }
       setStatus('error')
       setTranscribeProgress(null)
+      setIsCancelling(false)
+      pushActivity('Transcription failed', String(error))
+      onMessage(String(error))
+    }
+  }
+
+  const cancelTranscribe = async () => {
+    if (status !== 'running') return
+    setIsCancelling(true)
+    pushActivity('Cancel requested')
+    setTranscribeProgress((current) => ({
+      stage: 'cancelling',
+      message: 'Cancelling transcription',
+      percent: current?.percent ?? null,
+      chunkIndex: current?.chunkIndex,
+      chunkTotal: current?.chunkTotal,
+      chunkStartMs: current?.chunkStartMs,
+      chunkEndMs: current?.chunkEndMs,
+    }))
+    onMessage('Cancelling transcription')
+
+    try {
+      const response = await invoke<ICancelTranscribeResponse>('cancel_transcribe')
+      if (!response.cancelled) {
+        setIsCancelling(false)
+        onMessage(response.message)
+      }
+    } catch (error) {
+      setIsCancelling(false)
       onMessage(String(error))
     }
   }
@@ -121,12 +206,30 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
 
   const resetJob = () => {
     setOutput('')
+    setTranscript(null)
     setResultMeta({ elapsedMs: null, wroteTo: null })
     setStatus('idle')
+    setIsCancelling(false)
     setTranscribeProgress(null)
+    setActivityLog([])
+    lastActivityKeyRef.current = ''
   }
 
-  return { copyOutput, output, resetJob, resultMeta, runSample, runTranscribe, setStatus, status, transcribeProgress }
+  return {
+    copyOutput,
+    activityLog,
+    cancelTranscribe,
+    isCancelling,
+    output,
+    transcript,
+    resetJob,
+    resultMeta,
+    runSample,
+    runTranscribe,
+    setStatus,
+    status,
+    transcribeProgress,
+  }
 }
 
 export type { IRunTranscribeInput }

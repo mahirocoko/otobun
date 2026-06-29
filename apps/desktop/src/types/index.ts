@@ -10,10 +10,44 @@ export type OutputLocation = 'downloads' | 'source-folder' | 'custom'
 
 export type TranscribeMode = 'single' | 'smart'
 
+export interface ISpeaker {
+  id: string
+  label: string
+}
+
+export interface ITimeRange {
+  startMs: number
+  endMs: number
+}
+
+export interface ITranscriptSegment {
+  range: ITimeRange
+  speakerId?: string | null
+  text: string
+}
+
+export interface ITranscript {
+  title: string
+  source?: string | null
+  language?: string | null
+  speakers: ISpeaker[]
+  segments: ITranscriptSegment[]
+}
+
 export interface ICommandResponse {
   output: string
   wroteTo?: string | null
   elapsedMs?: number | null
+  transcript?: ITranscript | null
+}
+
+export interface ICancelTranscribeResponse {
+  cancelled: boolean
+  message: string
+}
+
+export interface IClearTempFilesResponse {
+  removed: number
 }
 
 export interface IFormatOption {
@@ -77,6 +111,13 @@ export interface ITranscribeProgress {
   chunkTotal?: number | null
   chunkStartMs?: number | null
   chunkEndMs?: number | null
+}
+
+export interface ITranscribeActivityItem {
+  id: string
+  label: string
+  detail?: string
+  time: string
 }
 
 export interface ITranscribeProgressContext {

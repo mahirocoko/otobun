@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useMemo, useState } from 'react'
 import { AppSidebar } from './components/app-sidebar'
@@ -16,7 +17,14 @@ import { useInstalledModels } from './hooks/use-installed-models'
 import { useMediaPreview } from './hooks/use-media-preview'
 import { useModelPreference, writeModelPreference } from './hooks/use-model-preference'
 import { useTranscriptionJob } from './hooks/use-transcription-job'
-import type { AppSection, ExportFormat, InputMode, OutputLocation, TranscribeMode } from './types'
+import type {
+  AppSection,
+  ExportFormat,
+  IClearTempFilesResponse,
+  InputMode,
+  OutputLocation,
+  TranscribeMode,
+} from './types'
 import { getFileName, getFileStem, resolveDefaultOutputPath } from './utils/paths'
 
 const App = () => {
@@ -170,6 +178,15 @@ const App = () => {
       whisperBin,
     })
 
+  const clearTempFiles = async () => {
+    try {
+      const response = await invoke<IClearTempFilesResponse>('clear_temp_files')
+      setMessage(response.removed > 0 ? `Cleared ${response.removed} temp folder(s)` : 'No Otobun temp files to clear')
+    } catch (error) {
+      setMessage(String(error))
+    }
+  }
+
   const commonFormProps = {
     activeSection,
     canTranscribe,
@@ -201,6 +218,7 @@ const App = () => {
     onChooseInput: chooseInput,
     onChooseModel: chooseModel,
     onChooseOutput: chooseOutput,
+    onClearTempFiles: () => void clearTempFiles(),
     onDownloadModel: (id: string) => void installedModelState.downloadModel(id),
     onExportSample: () => void runSample(),
     onRemoveInput: removeInput,
@@ -229,9 +247,13 @@ const App = () => {
           {activeSection === 'transcribe' ? (
             <TranscribeWorkspace
               {...commonFormProps}
+              activityLog={transcriptionJob.activityLog}
+              isCancelling={transcriptionJob.isCancelling}
               output={transcriptionJob.output}
+              transcript={transcriptionJob.transcript}
               progressContext={progressContext}
               resultMeta={transcriptionJob.resultMeta}
+              onCancelTranscribe={() => void transcriptionJob.cancelTranscribe()}
               onCopyOutput={() => void transcriptionJob.copyOutput()}
               onNewTranscript={startNewTranscript}
             />

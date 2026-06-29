@@ -72,6 +72,7 @@ interface ITranscriptFormProps {
   onChooseInput: () => void
   onChooseModel: () => void
   onChooseOutput: () => void
+  onClearTempFiles: () => void
   onExportSample: () => void
   onTranscribe: () => void
   onRemoveInput: () => void
@@ -120,6 +121,7 @@ const TranscriptForm = ({
   onChooseInput,
   onChooseModel,
   onChooseOutput,
+  onClearTempFiles,
   onDownloadModel,
   onUninstallModel,
   onExportSample,
@@ -132,6 +134,7 @@ const TranscriptForm = ({
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false)
   const [previewCurrentTime, setPreviewCurrentTime] = useState(0)
   const [previewDuration, setPreviewDuration] = useState(0)
+  const [showAllModels, setShowAllModels] = useState(false)
   const audioSource = useMemo(() => (input ? convertFileSrc(input) : ''), [input])
   const previewDurationSeconds = previewDuration || (mediaPreview?.durationMs ? mediaPreview.durationMs / 1000 : 0)
   const previewProgressRatio = previewDurationSeconds > 0 ? previewCurrentTime / previewDurationSeconds : 0
@@ -191,6 +194,9 @@ const TranscriptForm = ({
   }
 
   if (activeSection === 'models') {
+    const recommendedModels = MODEL_CATALOG.filter((item) => item.recommended)
+    const otherModels = MODEL_CATALOG.filter((item) => !item.recommended)
+
     return (
       <Card className="panel-card">
         <CardHeader>
@@ -201,18 +207,27 @@ const TranscriptForm = ({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="custom-model-block">
+          <div className={`custom-model-block ${selectedModelId === 'custom' ? 'is-selected' : ''}`}>
             <div>
               <strong>Custom model file</strong>
               <p>Load a local `.bin` or `.gguf` file for the current transcription engine.</p>
             </div>
             <div className="custom-model-actions">
-              {model ? (
-                <span className="state-chip is-ready">Loaded</span>
-              ) : (
-                <span className="state-chip">Required</span>
-              )}
-              <Button onClick={onChooseModel} type="button" variant="secondary">
+              {model && selectedModelId === 'custom' ? <span className="active-indicator">Active</span> : null}
+              {model && selectedModelId !== 'custom' ? (
+                <Button
+                  onClick={() => {
+                    onChangeSelectedModelId('custom')
+                    onChangeActiveSection('transcribe')
+                  }}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                >
+                  Use custom
+                </Button>
+              ) : null}
+              <Button onClick={onChooseModel} type="button" variant="secondary" size="sm">
                 <IconFolderOpen />
                 {model ? 'Change file' : 'Select file'}
               </Button>
@@ -220,77 +235,177 @@ const TranscriptForm = ({
           </div>
           {model ? <code className="path-line">{model}</code> : null}
 
-          <div className="model-grid">
-            {MODEL_CATALOG.map((item) => {
-              const isSelected = selectedModelId === item.id
-              const installedPath = installedModels[item.id]
-              const isInstalled = Boolean(installedPath)
-              const downloadProgress = downloadingModels[item.id]
-              const isDownloading = downloadProgress !== undefined
-              const isUninstalling = uninstallingId === item.id
+          <div className="model-sections">
+            <div className="model-section-header">
+              <h3>Recommended models</h3>
+              <p>A short list for most local transcription work.</p>
+            </div>
 
-              return (
-                <article className={isSelected ? 'model-card is-selected' : 'model-card'} key={item.id}>
-                  <div className="model-card-head">
-                    <strong>{item.name}</strong>
-                    <div className="model-head-meta">
-                      {isSelected ? <span className="state-chip is-selected-chip">Selected</span> : null}
-                      {item.recommended ? <span className="state-chip is-recommended-chip">Recommended</span> : null}
-                      <span>{item.sizeMb} MB</span>
+            <div className="model-grid">
+              {recommendedModels.map((item) => {
+                const isSelected = selectedModelId === item.id
+                const installedPath = installedModels[item.id]
+                const isInstalled = Boolean(installedPath)
+                const downloadProgress = downloadingModels[item.id]
+                const isDownloading = downloadProgress !== undefined
+                const isUninstalling = uninstallingId === item.id
+
+                return (
+                  <article className={isSelected ? 'model-card is-selected' : 'model-card'} key={item.id}>
+                    <div className="model-card-info">
+                      <div className="model-card-title-row">
+                        <strong className="model-card-name">{item.name}</strong>
+                        <span className="model-card-size">{item.sizeMb} MB</span>
+                      </div>
+                      <p className="model-card-desc">{item.description}</p>
+                      <div className="model-meta-chips">
+                        <span className="meta-chip">{item.speed}</span>
+                        <span className="meta-chip">{item.quality}</span>
+                        <span className="meta-chip">{item.multilingual ? 'Multilingual' : 'English'}</span>
+                      </div>
                     </div>
-                  </div>
-                  <p>{item.description}</p>
-                  <div className="model-card-meta">
-                    <span>{item.speed}</span>
-                    <span>{item.quality}</span>
-                    <span>{item.multilingual ? 'Multilingual' : 'English'}</span>
-                  </div>
-                  <div className="model-card-footer">
-                    {isInstalled ? (
-                      <span className="state-chip is-ready">Installed</span>
-                    ) : (
-                      <span className="state-chip">Not installed</span>
-                    )}
-                    <div className="model-card-actions">
+                    <div className="model-card-actions-row">
                       {isDownloading ? (
-                        <span className="download-meter" role="progressbar" aria-label="Downloading model">
-                          <span className={`download-progress-value progress-${downloadProgress}`} />
-                        </span>
+                        <div className="download-progress-container">
+                          <span className="download-progress-label">Downloading {downloadProgress}%</span>
+                          <span className="download-meter" role="progressbar" aria-label="Downloading model">
+                            <span className="download-progress-value" style={{ width: `${downloadProgress}%` }} />
+                          </span>
+                        </div>
                       ) : isInstalled ? (
-                        <>
-                          <Button
-                            onClick={() => {
-                              onChangeSelectedModelId(item.id)
-                              onChangeActiveSection('transcribe')
-                            }}
-                            size="sm"
-                            type="button"
-                            variant={isSelected ? 'default' : 'secondary'}
-                          >
-                            {isSelected ? 'Selected' : 'Use model'}
-                          </Button>
+                        <div className="actions-group">
+                          {isSelected ? (
+                            <span className="active-indicator">Active</span>
+                          ) : (
+                            <Button
+                              onClick={() => {
+                                onChangeSelectedModelId(item.id)
+                                onChangeActiveSection('transcribe')
+                              }}
+                              size="sm"
+                              type="button"
+                              variant="secondary"
+                              className="btn-use-model"
+                            >
+                              Use model
+                            </Button>
+                          )}
                           <Button
                             disabled={isUninstalling}
                             onClick={() => onUninstallModel(item.id)}
                             size="sm"
                             type="button"
                             variant="ghost"
+                            className="btn-remove-model"
                           >
                             <IconTrash2 />
-                            {isUninstalling ? 'Removing' : 'Remove'}
+                            <span>{isUninstalling ? 'Removing' : 'Remove'}</span>
                           </Button>
-                        </>
+                        </div>
                       ) : (
-                        <Button onClick={() => onDownloadModel(item.id)} size="sm" type="button" variant="secondary">
+                        <Button
+                          onClick={() => onDownloadModel(item.id)}
+                          size="sm"
+                          type="button"
+                          variant="secondary"
+                          className="btn-install-model"
+                        >
                           <IconDownload />
                           Install
                         </Button>
                       )}
                     </div>
-                  </div>
-                </article>
-              )
-            })}
+                  </article>
+                )
+              })}
+            </div>
+
+            <div className="other-models-trigger">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setShowAllModels(!showAllModels)}
+                className="toggle-all-btn"
+              >
+                {showAllModels ? 'Hide other models' : `Show other models (${otherModels.length} more)`}
+              </Button>
+            </div>
+
+            {showAllModels ? (
+              <div className="other-models-list">
+                {otherModels.map((item) => {
+                  const isSelected = selectedModelId === item.id
+                  const installedPath = installedModels[item.id]
+                  const isInstalled = Boolean(installedPath)
+                  const downloadProgress = downloadingModels[item.id]
+                  const isDownloading = downloadProgress !== undefined
+                  const isUninstalling = uninstallingId === item.id
+
+                  return (
+                    <div className={isSelected ? 'other-model-row is-selected' : 'other-model-row'} key={item.id}>
+                      <div className="other-model-info">
+                        <strong className="other-model-name">{item.name}</strong>
+                        <span className="other-model-size">{item.sizeMb} MB</span>
+                        <div className="other-model-meta-chips">
+                          <span className="meta-chip">{item.speed}</span>
+                          <span className="meta-chip">{item.quality}</span>
+                          <span className="meta-chip">{item.multilingual ? 'Multilingual' : 'English'}</span>
+                        </div>
+                      </div>
+                      <div className="other-model-actions">
+                        {isDownloading ? (
+                          <div className="other-model-download">
+                            <span className="download-percent">{downloadProgress}%</span>
+                            <span className="download-meter" role="progressbar" aria-label="Downloading model">
+                              <span className="download-progress-value" style={{ width: `${downloadProgress}%` }} />
+                            </span>
+                          </div>
+                        ) : isInstalled ? (
+                          <div className="other-model-buttons">
+                            {isSelected ? (
+                              <span className="active-indicator-row">Active</span>
+                            ) : (
+                              <Button
+                                onClick={() => {
+                                  onChangeSelectedModelId(item.id)
+                                  onChangeActiveSection('transcribe')
+                                }}
+                                size="sm"
+                                type="button"
+                                variant="secondary"
+                              >
+                                Use
+                              </Button>
+                            )}
+                            <Button
+                              disabled={isUninstalling}
+                              onClick={() => onUninstallModel(item.id)}
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                              title="Remove"
+                            >
+                              <IconTrash2 />
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            onClick={() => onDownloadModel(item.id)}
+                            size="sm"
+                            type="button"
+                            variant="ghost"
+                            className="install-btn"
+                          >
+                            <IconDownload />
+                            <span>Install</span>
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
           </div>
 
           {selectedModelId !== 'custom' && !installedModels[selectedModelId] ? (
@@ -404,6 +519,17 @@ const TranscriptForm = ({
             <input checked={keepTemp} onChange={(event) => onChangeKeepTemp(event.target.checked)} type="checkbox" />
             <span>Keep intermediate audio files for debugging</span>
           </label>
+
+          <div className="temp-cleanup-card">
+            <div>
+              <strong>Temporary transcription files</strong>
+              <p>Remove stale Otobun temp folders left by cancelled or interrupted jobs.</p>
+            </div>
+            <Button onClick={onClearTempFiles} size="sm" type="button" variant="danger">
+              <IconTrash2 />
+              Clear temp files
+            </Button>
+          </div>
         </CardContent>
       </Card>
     )

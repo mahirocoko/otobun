@@ -1,13 +1,39 @@
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc,
+};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{Speaker, TimeRange, Transcript, TranscriptSegment};
+
+#[derive(Debug, Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TranscribeProgress {
@@ -58,6 +84,7 @@ pub struct TranscribeOptions {
     pub whisper_bin: PathBuf,
     pub keep_temp: bool,
     pub chunk_mode: ChunkMode,
+    pub cancellation_token: CancellationToken,
 }
 
 impl TranscribeOptions {
@@ -71,6 +98,7 @@ impl TranscribeOptions {
             whisper_bin: PathBuf::from("whisper-cli"),
             keep_temp: false,
             chunk_mode: ChunkMode::Single,
+            cancellation_token: CancellationToken::new(),
         }
     }
 }
@@ -99,6 +127,8 @@ pub enum TranscribeError {
     ParseWhisperOutput(serde_json::Error),
     #[error("unsupported whisper JSON shape")]
     UnsupportedWhisperJson,
+    #[error("transcription cancelled")]
+    Cancelled,
     #[error("failed to inspect normalized audio duration")]
     InspectDuration,
 }
@@ -121,6 +151,7 @@ where
         return Err(TranscribeError::MissingModel(options.model.clone()));
     }
 
+    check_cancelled(options)?;
     on_progress(TranscribeProgress::new(
         "preparing",
         "Preparing workspace",
@@ -186,7 +217,8 @@ where
         Some(8.0),
     ));
 
-    let output = Command::new(&options.ffmpeg_bin)
+    let mut command = Command::new(&options.ffmpeg_bin);
+    command
         .arg("-y")
         .arg("-i")
         .arg(&options.input)
@@ -196,14 +228,13 @@ where
         .arg("1")
         .arg("-c:a")
         .arg("pcm_s16le")
-        .arg(output_wav)
-        .output()
-        .map_err(TranscribeError::FfmpegIo)?;
+        .arg(output_wav);
 
-    if !output.status.success() {
+    let (status, stderr) = run_ffmpeg_command(options, &mut command)?;
+    if !status.success() {
         return Err(TranscribeError::FfmpegFailed {
-            status: output.status.to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            status: status.to_string(),
+            stderr: stderr.trim().to_string(),
         });
     }
 
@@ -228,6 +259,7 @@ fn run_whisper<F>(
 where
     F: FnMut(TranscribeProgress),
 {
+    check_cancelled(options)?;
     let thread_count = std::thread::available_parallelism()
         .map(|count| count.get().saturating_sub(1).clamp(4, 8))
         .unwrap_or(4);
@@ -271,11 +303,22 @@ where
         .spawn()
         .map_err(TranscribeError::WhisperIo)?;
 
-    let mut stderr_output = String::new();
+    let (line_tx, line_rx) = mpsc::channel();
     if let Some(stderr) = child.stderr.take() {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            let line = line.map_err(TranscribeError::WhisperIo)?;
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                if line_tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    let mut stderr_output = String::new();
+    let status = loop {
+        while let Ok(line_result) = line_rx.try_recv() {
+            let line = line_result.map_err(TranscribeError::WhisperIo)?;
             if !line.trim().is_empty() {
                 stderr_output.push_str(&line);
                 stderr_output.push('\n');
@@ -292,9 +335,27 @@ where
                 });
             }
         }
-    }
 
-    let status = child.wait().map_err(TranscribeError::WhisperIo)?;
+        if options.cancellation_token.is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(TranscribeError::Cancelled);
+        }
+
+        if let Some(status) = child.try_wait().map_err(TranscribeError::WhisperIo)? {
+            break status;
+        }
+
+        thread::sleep(Duration::from_millis(80));
+    };
+
+    while let Ok(line_result) = line_rx.try_recv() {
+        let line = line_result.map_err(TranscribeError::WhisperIo)?;
+        if !line.trim().is_empty() {
+            stderr_output.push_str(&line);
+            stderr_output.push('\n');
+        }
+    }
     if !status.success() {
         return Err(TranscribeError::WhisperFailed {
             status: status.to_string(),
@@ -312,6 +373,54 @@ where
         None => finished_progress,
     });
     Ok(())
+}
+
+fn check_cancelled(options: &TranscribeOptions) -> Result<(), TranscribeError> {
+    if options.cancellation_token.is_cancelled() {
+        Err(TranscribeError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn run_ffmpeg_command(
+    options: &TranscribeOptions,
+    command: &mut Command,
+) -> Result<(ExitStatus, String), TranscribeError> {
+    check_cancelled(options)?;
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(TranscribeError::FfmpegIo)?;
+
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    if let Some(mut stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            let mut output = String::new();
+            let _ = stderr.read_to_string(&mut output);
+            let _ = stderr_tx.send(output);
+        });
+    }
+
+    let status = loop {
+        if options.cancellation_token.is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(TranscribeError::Cancelled);
+        }
+
+        if let Some(status) = child.try_wait().map_err(TranscribeError::FfmpegIo)? {
+            break status;
+        }
+
+        thread::sleep(Duration::from_millis(80));
+    };
+
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    Ok((status, stderr))
 }
 
 fn parse_whisper_progress(line: &str) -> Option<f64> {
@@ -337,6 +446,7 @@ fn transcribe_single_pass<F>(
 where
     F: FnMut(TranscribeProgress),
 {
+    check_cancelled(options)?;
     run_whisper(
         options,
         normalized_wav,
@@ -352,6 +462,7 @@ where
         "Reading transcript output",
         Some(96.0),
     ));
+    check_cancelled(options)?;
     parse_whisper_output_file(options, whisper_output_json)
 }
 
@@ -389,6 +500,7 @@ where
     let mut segments = Vec::new();
 
     for (index, chunk) in chunks.iter().enumerate() {
+        check_cancelled(options)?;
         let chunk_number = index + 1;
         let chunk_path = temp_dir.join(format!("chunk-{chunk_number:04}.wav"));
         let output_base = temp_dir.join(format!("transcript-{chunk_number:04}"));
@@ -466,18 +578,17 @@ fn detect_silence_boundaries_with(
     duration: &str,
 ) -> Result<Vec<u64>, TranscribeError> {
     let filter = format!("silencedetect=noise={noise}:d={duration}");
-    let output = Command::new(&options.ffmpeg_bin)
+    let mut command = Command::new(&options.ffmpeg_bin);
+    command
         .arg("-i")
         .arg(input_wav)
         .arg("-af")
         .arg(filter)
         .arg("-f")
         .arg("null")
-        .arg("-")
-        .output()
-        .map_err(TranscribeError::FfmpegIo)?;
+        .arg("-");
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let (_status, stderr) = run_ffmpeg_command(options, &mut command)?;
     let mut starts = Vec::new();
     let mut boundaries = Vec::new();
 
@@ -559,7 +670,8 @@ fn extract_chunk(
 ) -> Result<(), TranscribeError> {
     let start_seconds = format_seconds(chunk.start_ms);
     let duration_seconds = format_seconds(chunk.duration_ms());
-    let output = Command::new(&options.ffmpeg_bin)
+    let mut command = Command::new(&options.ffmpeg_bin);
+    command
         .arg("-y")
         .arg("-ss")
         .arg(start_seconds)
@@ -573,14 +685,13 @@ fn extract_chunk(
         .arg("1")
         .arg("-c:a")
         .arg("pcm_s16le")
-        .arg(output_wav)
-        .output()
-        .map_err(TranscribeError::FfmpegIo)?;
+        .arg(output_wav);
 
-    if !output.status.success() {
+    let (status, stderr) = run_ffmpeg_command(options, &mut command)?;
+    if !status.success() {
         return Err(TranscribeError::FfmpegFailed {
-            status: output.status.to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            status: status.to_string(),
+            stderr: stderr.trim().to_string(),
         });
     }
 
@@ -764,5 +875,74 @@ mod tests {
         let transcript = parse_whisper_json(raw, &options()).unwrap();
         assert_eq!(transcript.segments[0].range.start_ms, 500);
         assert_eq!(transcript.segments[0].range.end_ms, 1500);
+    }
+
+    #[test]
+    fn cancels_running_ffmpeg_child_process() {
+        let mut options = options();
+        options.cancellation_token = CancellationToken::new();
+        let cancellation_token = options.cancellation_token.clone();
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg("sleep 5; echo should-not-finish >&2");
+
+        let started_at = std::time::Instant::now();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(120));
+            cancellation_token.cancel();
+        });
+
+        let result = run_ffmpeg_command(&options, &mut command);
+        canceller.join().unwrap();
+
+        assert!(matches!(result, Err(TranscribeError::Cancelled)));
+        assert!(started_at.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn cancels_running_whisper_child_process() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script_path = std::env::temp_dir().join(format!(
+            "otobun-fake-whisper-{}-{}.sh",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        fs::write(
+            &script_path,
+            "#!/bin/sh\nwhile true; do echo 'progress 10%' >&2; sleep 1; done\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).unwrap();
+
+        let mut options = options();
+        options.whisper_bin = script_path.clone();
+        options.cancellation_token = CancellationToken::new();
+        let cancellation_token = options.cancellation_token.clone();
+        let started_at = std::time::Instant::now();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(120));
+            cancellation_token.cancel();
+        });
+
+        let result = run_whisper(
+            &options,
+            Path::new("input.wav"),
+            Path::new("transcript"),
+            &mut |_| {},
+            0.0,
+            100.0,
+            "Testing fake whisper".to_string(),
+            None,
+        );
+        canceller.join().unwrap();
+        let _ = fs::remove_file(script_path);
+
+        assert!(matches!(result, Err(TranscribeError::Cancelled)));
+        assert!(started_at.elapsed() < Duration::from_secs(2));
     }
 }

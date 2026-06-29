@@ -3,16 +3,22 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
 use otobun_core::{
-    export_transcript, sample_transcript, transcribe_file_with_progress, ChunkMode, ExportFormat,
-    TranscribeOptions, TranscribeProgress,
+    export_transcript, sample_transcript, transcribe_file_with_progress, CancellationToken,
+    ChunkMode, ExportFormat, TranscribeOptions, TranscribeProgress, Transcript,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
 const MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+
+#[derive(Default)]
+struct TranscriptionControl {
+    current_token: Mutex<Option<CancellationToken>>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +63,39 @@ struct CommandResponse {
     output: String,
     wrote_to: Option<String>,
     elapsed_ms: Option<u64>,
+    transcript: Option<TranscriptResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscriptResponse {
+    title: String,
+    source: Option<String>,
+    language: Option<String>,
+    speakers: Vec<SpeakerResponse>,
+    segments: Vec<TranscriptSegmentResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeakerResponse {
+    id: String,
+    label: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscriptSegmentResponse {
+    range: TimeRangeResponse,
+    speaker_id: Option<String>,
+    text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TimeRangeResponse {
+    start_ms: u64,
+    end_ms: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,6 +112,19 @@ struct ModelFileResponse {
 struct MediaPreviewResponse {
     duration_ms: u64,
     peaks: Vec<f32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelTranscribeResponse {
+    cancelled: bool,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClearTempFilesResponse {
+    removed: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,9 +161,13 @@ struct TranscribeProgressEvent {
 #[tauri::command]
 fn export_sample(request: ExportSampleRequest) -> Result<CommandResponse, String> {
     let format = parse_format(&request.format)?;
-    let output =
-        export_transcript(&sample_transcript(), format).map_err(|error| error.to_string())?;
-    write_optional_output(output, request.output_path)
+    let sample = sample_transcript();
+    let output = export_transcript(&sample, format).map_err(|error| error.to_string())?;
+    write_optional_output(
+        output,
+        request.output_path,
+        Some(transcript_response(&sample)),
+    )
 }
 
 #[tauri::command]
@@ -200,6 +256,46 @@ async fn transcribe(app: AppHandle, request: TranscribeRequest) -> Result<Comman
         .map_err(|error| format!("transcribe task failed: {error}"))?
 }
 
+#[tauri::command]
+fn cancel_transcribe(app: AppHandle) -> Result<CancelTranscribeResponse, String> {
+    let state = app.state::<TranscriptionControl>();
+    let current_token = state
+        .current_token
+        .lock()
+        .map_err(|_| "failed to lock transcription state".to_string())?;
+
+    if let Some(token) = current_token.as_ref() {
+        token.cancel();
+        emit_transcribe_progress(&app, "cancelling", "Cancelling transcription", None);
+        return Ok(CancelTranscribeResponse {
+            cancelled: true,
+            message: "Cancellation requested".to_string(),
+        });
+    }
+
+    Ok(CancelTranscribeResponse {
+        cancelled: false,
+        message: "No active transcription".to_string(),
+    })
+}
+
+#[tauri::command]
+fn clear_temp_files(app: AppHandle) -> Result<ClearTempFilesResponse, String> {
+    let state = app.state::<TranscriptionControl>();
+    let current_token = state
+        .current_token
+        .lock()
+        .map_err(|_| "failed to lock transcription state".to_string())?;
+    if current_token.is_some() {
+        return Err("Cannot clear temp files while transcription is running".to_string());
+    }
+    drop(current_token);
+
+    Ok(ClearTempFilesResponse {
+        removed: cleanup_temp_dirs(None),
+    })
+}
+
 fn transcribe_blocking(
     app: AppHandle,
     request: TranscribeRequest,
@@ -215,7 +311,21 @@ fn transcribe_blocking(
         options.ffmpeg_bin = PathBuf::from(ffmpeg_bin);
     }
     options.whisper_bin = resolve_whisper_binary(request.whisper_bin.as_deref())?;
+    let cancellation_token = CancellationToken::new();
+    options.cancellation_token = cancellation_token.clone();
 
+    begin_transcription(&app, cancellation_token)?;
+    let response = run_transcription_job(&app, request.output_path, format, &options);
+    end_transcription(&app);
+    response
+}
+
+fn run_transcription_job(
+    app: &AppHandle,
+    output_path: Option<String>,
+    format: ExportFormat,
+    options: &TranscribeOptions,
+) -> Result<CommandResponse, String> {
     let started_at = Instant::now();
     emit_transcribe_progress(&app, "queued", "Starting transcription", Some(1.0));
     let transcript = transcribe_file_with_progress(&options, |progress| {
@@ -224,7 +334,8 @@ fn transcribe_blocking(
     .map_err(|error| error.to_string())?;
     emit_transcribe_progress(&app, "exporting", "Writing transcript output", Some(98.0));
     let output = export_transcript(&transcript, format).map_err(|error| error.to_string())?;
-    let mut response = write_optional_output(output, request.output_path)?;
+    let mut response =
+        write_optional_output(output, output_path, Some(transcript_response(&transcript)))?;
     response.elapsed_ms = Some(
         started_at
             .elapsed()
@@ -234,6 +345,25 @@ fn transcribe_blocking(
     );
     emit_transcribe_progress(&app, "done", "Transcript ready", Some(100.0));
     Ok(response)
+}
+
+fn begin_transcription(app: &AppHandle, token: CancellationToken) -> Result<(), String> {
+    let state = app.state::<TranscriptionControl>();
+    let mut current_token = state
+        .current_token
+        .lock()
+        .map_err(|_| "failed to lock transcription state".to_string())?;
+    if current_token.is_some() {
+        return Err("Transcription is already running".to_string());
+    }
+    *current_token = Some(token);
+    Ok(())
+}
+
+fn end_transcription(app: &AppHandle) {
+    if let Ok(mut current_token) = app.state::<TranscriptionControl>().current_token.lock() {
+        *current_token = None;
+    }
 }
 
 #[tauri::command]
@@ -594,15 +724,45 @@ fn parse_format(value: &str) -> Result<ExportFormat, String> {
         .map_err(|error| error.to_string())
 }
 
+fn transcript_response(transcript: &Transcript) -> TranscriptResponse {
+    TranscriptResponse {
+        title: transcript.title.clone(),
+        source: transcript.source.clone(),
+        language: transcript.language.clone(),
+        speakers: transcript
+            .speakers
+            .iter()
+            .map(|speaker| SpeakerResponse {
+                id: speaker.id.clone(),
+                label: speaker.label.clone(),
+            })
+            .collect(),
+        segments: transcript
+            .segments
+            .iter()
+            .map(|segment| TranscriptSegmentResponse {
+                range: TimeRangeResponse {
+                    start_ms: segment.range.start_ms,
+                    end_ms: segment.range.end_ms,
+                },
+                speaker_id: segment.speaker_id.clone(),
+                text: segment.text.clone(),
+            })
+            .collect(),
+    }
+}
+
 fn write_optional_output(
     output: String,
     output_path: Option<String>,
+    transcript: Option<TranscriptResponse>,
 ) -> Result<CommandResponse, String> {
     let Some(path) = output_path.filter(|value| !value.trim().is_empty()) else {
         return Ok(CommandResponse {
             output,
             wrote_to: None,
             elapsed_ms: None,
+            transcript,
         });
     };
 
@@ -621,14 +781,21 @@ fn write_optional_output(
         output,
         wrote_to: Some(path),
         elapsed_ms: None,
+        transcript,
     })
 }
 
 fn cleanup_stale_temp_dirs() {
     const STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
+    let _ = cleanup_temp_dirs(Some(STALE_AFTER));
+}
+
+fn cleanup_temp_dirs(min_age: Option<Duration>) -> usize {
+    let mut removed = 0;
+
     let Ok(entries) = fs::read_dir(std::env::temp_dir()) else {
-        return;
+        return removed;
     };
     let now = SystemTime::now();
 
@@ -637,7 +804,7 @@ fn cleanup_stale_temp_dirs() {
         let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
             continue;
         };
-        if !name.starts_with("otobun-") || !path.is_dir() {
+        if !is_transcription_temp_dir_name(name) || !path.is_dir() {
             continue;
         }
 
@@ -650,14 +817,25 @@ fn cleanup_stale_temp_dirs() {
         let Ok(age) = now.duration_since(modified_at) else {
             continue;
         };
-        if age > STALE_AFTER {
-            let _ = fs::remove_dir_all(path);
+        if min_age.map(|minimum| age >= minimum).unwrap_or(true) && fs::remove_dir_all(path).is_ok()
+        {
+            removed += 1;
         }
     }
+
+    removed
+}
+
+fn is_transcription_temp_dir_name(name: &str) -> bool {
+    name.strip_prefix("otobun-")
+        .and_then(|suffix| suffix.chars().next())
+        .map(|first_char| first_char.is_ascii_digit())
+        .unwrap_or(false)
 }
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(TranscriptionControl::default())
         .setup(|_app| {
             cleanup_stale_temp_dirs();
             Ok(())
@@ -667,6 +845,8 @@ pub fn run() {
             export_sample,
             get_media_preview,
             transcribe,
+            cancel_transcribe,
+            clear_temp_files,
             get_engine_status,
             list_models,
             download_model,
@@ -674,4 +854,17 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Otobun desktop app");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_transcription_temp_dir_name;
+
+    #[test]
+    fn matches_only_core_transcription_temp_dir_names() {
+        assert!(is_transcription_temp_dir_name("otobun-123-456"));
+        assert!(!is_transcription_temp_dir_name("otobun-desktop"));
+        assert!(!is_transcription_temp_dir_name("otobun-cache"));
+        assert!(!is_transcription_temp_dir_name("other-123"));
+    }
 }

@@ -121,9 +121,14 @@ fn export_vtt(transcript: &Transcript) -> String {
 
 fn format_timestamp_compact(ms: u64) -> String {
     let total_seconds = ms / 1_000;
-    let minutes = total_seconds / 60;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
-    format!("{:02}:{:02}", minutes, seconds)
+    if hours > 0 {
+        format!("{}:{:02}:{:02}", hours, minutes, seconds)
+    } else {
+        format!("{:02}:{:02}", minutes, seconds)
+    }
 }
 
 fn format_srt_timestamp(ms: u64) -> String {

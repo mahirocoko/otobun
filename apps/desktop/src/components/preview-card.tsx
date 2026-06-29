@@ -5,7 +5,7 @@ import IconFileText from '~icons/lucide/file-text'
 import IconPause from '~icons/lucide/pause'
 import IconPlay from '~icons/lucide/play'
 import IconRotateCcw from '~icons/lucide/rotate-ccw'
-import type { ExportFormat, ITranscribeResultMeta } from '../types'
+import type { ExportFormat, ITranscribeResultMeta, ITranscript } from '../types'
 import { Button } from './ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
@@ -15,6 +15,7 @@ interface IPreviewCardProps {
   format: ExportFormat
   input: string
   meta: ITranscribeResultMeta
+  transcript?: ITranscript | null
   onCopy: () => void
   onNewTranscript: () => void
 }
@@ -28,8 +29,12 @@ interface ISegment {
 
 const formatClock = (durationSeconds: number) => {
   const totalSeconds = Math.max(0, Math.round(durationSeconds))
-  const minutes = Math.floor(totalSeconds / 60)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+  }
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
@@ -48,21 +53,41 @@ const parseCompactTimestamp = (value: string) => {
 
 const formatSegmentTime = (startMs: number) => {
   const seconds = Math.floor(startMs / 1000)
-  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
   const remainingSeconds = seconds % 60
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`
+  }
   return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`
 }
 
-const PreviewCard = ({ output, format, input, meta, onCopy, onNewTranscript }: IPreviewCardProps) => {
+const PreviewCard = ({ output, format, input, meta, transcript, onCopy, onNewTranscript }: IPreviewCardProps) => {
   const [viewMode, setViewMode] = useState<'reader' | 'source'>('reader')
   const [isPlaying, setIsPlaying] = useState(false)
   const [audioCurrentTime, setAudioCurrentTime] = useState(0)
   const [audioDuration, setAudioDuration] = useState(0)
+  const [followPlayback, setFollowPlayback] = useState(true)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const rowRefs = useRef<Array<HTMLElement | null>>([])
   const audioSource = useMemo(() => (input ? convertFileSrc(input) : ''), [input])
 
   const parsedSegments = useMemo<ISegment[]>(() => {
+    if (transcript && Array.isArray(transcript.segments)) {
+      return transcript.segments.map((segment) => {
+        const startMs = segment.range.startMs
+        const speaker = segment.speakerId
+          ? transcript.speakers?.find((s) => s.id === segment.speakerId)?.label || 'Transcript'
+          : 'Transcript'
+        return {
+          time: formatSegmentTime(startMs),
+          startMs,
+          speaker,
+          text: segment.text || '',
+        }
+      })
+    }
+
     if (!output.trim()) return []
 
     try {
@@ -194,7 +219,7 @@ const PreviewCard = ({ output, format, input, meta, onCopy, onNewTranscript }: I
       .split('\n')
       .filter((line) => line.trim())
       .map((line) => ({ time: '--:--', startMs: null, speaker: 'Transcript', text: line }))
-  }, [output, format])
+  }, [output, format, transcript])
 
   const activeSegmentIndex = useMemo(() => {
     const currentMs = audioCurrentTime * 1000
@@ -210,9 +235,9 @@ const PreviewCard = ({ output, format, input, meta, onCopy, onNewTranscript }: I
   }, [audioCurrentTime, parsedSegments])
 
   useEffect(() => {
-    if (!isPlaying || viewMode !== 'reader' || activeSegmentIndex < 0) return
+    if (!isPlaying || !followPlayback || viewMode !== 'reader' || activeSegmentIndex < 0) return
     rowRefs.current[activeSegmentIndex]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [activeSegmentIndex, isPlaying, viewMode])
+  }, [activeSegmentIndex, isPlaying, followPlayback, viewMode])
 
   const togglePlayback = async () => {
     const audio = audioRef.current
@@ -223,6 +248,24 @@ const PreviewCard = ({ output, format, input, meta, onCopy, onNewTranscript }: I
     } else {
       audio.pause()
     }
+  }
+
+  const seekToSegment = (startMs: number | null) => {
+    if (startMs === null || !audioRef.current) return
+    audioRef.current.currentTime = startMs / 1000
+    setAudioCurrentTime(startMs / 1000)
+  }
+
+  const handleTimelineClick = (event: React.MouseEvent<HTMLSpanElement>) => {
+    const track = event.currentTarget
+    const rect = track.getBoundingClientRect()
+    const clickX = event.clientX - rect.left
+    const width = rect.width
+    if (width === 0 || audioDuration === 0 || !audioRef.current) return
+    const clickRatio = Math.max(0, Math.min(1, clickX / width))
+    const targetTime = clickRatio * audioDuration
+    audioRef.current.currentTime = targetTime
+    setAudioCurrentTime(targetTime)
   }
 
   const progressRatio = audioDuration > 0 ? audioCurrentTime / audioDuration : 0
@@ -277,38 +320,72 @@ const PreviewCard = ({ output, format, input, meta, onCopy, onNewTranscript }: I
                   {isPlaying ? <IconPause /> : <IconPlay />}
                 </Button>
                 <div className="result-audio-timeline">
-                  <span className="progress-track" aria-label="Audio playback progress" role="progressbar">
+                  {/* biome-ignore lint/a11y/useKeyWithClickEvents: timeline click is pointer-only */}
+                  <span
+                    className="progress-track"
+                    aria-label="Audio playback progress"
+                    role="progressbar"
+                    onClick={handleTimelineClick}
+                    style={{ cursor: 'pointer' }}
+                  >
                     <span style={{ width: `${Math.max(0, Math.min(100, progressRatio * 100))}%` }} />
                   </span>
-                  <span>
-                    {formatClock(audioCurrentTime)} / {audioDuration > 0 ? formatClock(audioDuration) : '--:--'}
-                  </span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>
+                      {formatClock(audioCurrentTime)} / {audioDuration > 0 ? formatClock(audioDuration) : '--:--'}
+                    </span>
+                    <label
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '0.72rem',
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        color: followPlayback ? 'var(--primary)' : 'var(--muted-foreground)',
+                        transition: 'color 140ms',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={followPlayback}
+                        onChange={(event) => setFollowPlayback(event.target.checked)}
+                        style={{ accentColor: 'var(--primary)', cursor: 'pointer' }}
+                      />
+                      <span>Sync Reader</span>
+                    </label>
+                  </div>
                 </div>
               </div>
             ) : null}
             <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'reader' | 'source')}>
               <TabsContent value="reader">
                 <div className="reader-list">
-                  {parsedSegments.map((segment, index) => (
-                    <article
-                      className={index === activeSegmentIndex ? 'reader-row is-active' : 'reader-row'}
-                      // biome-ignore lint/suspicious/noArrayIndexKey: preview order is static for current output
-                      key={`${segment.time}-${index}`}
-                      ref={(node) => {
-                        rowRefs.current[index] = node
-                      }}
-                    >
-                      <div className="reader-row-meta">
-                        <span>{segment.speaker}</span>
-                        <code>{segment.time}</code>
-                      </div>
-                      <p>{segment.text}</p>
-                    </article>
-                  ))}
+                  {parsedSegments.map((segment, index) => {
+                    return (
+                      // biome-ignore lint/a11y/useKeyWithClickEvents: seek on row click is pointer-only
+                      <article
+                        className={index === activeSegmentIndex ? 'reader-row is-active' : 'reader-row'}
+                        // biome-ignore lint/suspicious/noArrayIndexKey: preview order is static for current output
+                        key={`${segment.time}-${index}`}
+                        ref={(node) => {
+                          rowRefs.current[index] = node
+                        }}
+                        onClick={() => seekToSegment(segment.startMs)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <div className="reader-row-meta">
+                          <span>{segment.speaker}</span>
+                          <code>{segment.time}</code>
+                        </div>
+                        <p>{segment.text}</p>
+                      </article>
+                    )
+                  })}
                 </div>
               </TabsContent>
               <TabsContent value="source">
-                <textarea className="raw-output" readOnly value={output} />
+                <pre className="raw-output">{output}</pre>
               </TabsContent>
             </Tabs>
           </>
