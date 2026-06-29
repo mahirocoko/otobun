@@ -1,5 +1,6 @@
 import IconDownload from '~icons/lucide/download'
 import IconFileAudio from '~icons/lucide/file-audio'
+import IconHistory from '~icons/lucide/history'
 import IconMic from '~icons/lucide/mic'
 import IconSettings from '~icons/lucide/settings'
 import logo from '../assets/otobun-logo-selected.png'
@@ -20,6 +21,7 @@ interface IAppSidebarProps {
 
 const NAV_ITEMS: INavItem[] = [
   { value: 'transcribe', label: 'Transcribe', icon: IconFileAudio },
+  { value: 'library', label: 'History', icon: IconHistory },
   { value: 'models', label: 'Models', icon: IconDownload },
   { value: 'permissions', label: 'Permissions', icon: IconMic },
   { value: 'settings', label: 'Settings', icon: IconSettings },

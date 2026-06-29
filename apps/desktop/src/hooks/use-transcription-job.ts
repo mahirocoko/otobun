@@ -26,6 +26,14 @@ interface IRunTranscribeInput {
   title: string
   transcribeMode: TranscribeMode
   whisperBin: string
+  onComplete?: (context: ITranscribeCompleteContext) => Promise<void> | void
+}
+
+interface ITranscribeCompleteContext {
+  finalLanguage: string
+  finalOutputPath: string
+  response: ICommandResponse
+  request: IRunTranscribeInput
 }
 
 const useTranscriptionJob = (onMessage: (message: string) => void) => {
@@ -152,6 +160,12 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
       setStatus('done')
       setTranscribeProgress(null)
       setIsCancelling(false)
+      await input.onComplete?.({
+        finalLanguage,
+        finalOutputPath,
+        request: input,
+        response,
+      })
       pushActivity(response.wroteTo ? 'Transcript saved' : 'Transcript ready', response.wroteTo ?? undefined)
       onMessage(response.wroteTo ? `Saved to ${response.wroteTo}` : 'Transcription complete')
     } catch (error) {

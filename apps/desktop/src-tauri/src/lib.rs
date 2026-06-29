@@ -85,6 +85,36 @@ struct MediaPreviewRequest {
     bar_count: Option<usize>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryEntry {
+    id: String,
+    title: String,
+    source_path: String,
+    output_path: String,
+    model_label: String,
+    model_path: String,
+    language: String,
+    format: String,
+    transcribe_mode: String,
+    created_at: String,
+    elapsed_ms: Option<u64>,
+    duration_ms: Option<u64>,
+    segment_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveLibraryEntryRequest {
+    entry: LibraryEntry,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryEntryActionRequest {
+    id: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CommandResponse {
@@ -346,6 +376,46 @@ fn clear_temp_files(app: AppHandle) -> Result<ClearTempFilesResponse, String> {
     Ok(ClearTempFilesResponse {
         removed: cleanup_temp_dirs(None),
     })
+}
+
+#[tauri::command]
+fn list_library_entries(app: AppHandle) -> Result<Vec<LibraryEntry>, String> {
+    read_library_entries(&app)
+}
+
+#[tauri::command]
+fn save_library_entry(
+    app: AppHandle,
+    request: SaveLibraryEntryRequest,
+) -> Result<Vec<LibraryEntry>, String> {
+    let mut entries = read_library_entries(&app)?;
+    entries.retain(|entry| entry.id != request.entry.id);
+    entries.insert(0, request.entry);
+    write_library_entries(&app, &entries)?;
+    Ok(entries)
+}
+
+#[tauri::command]
+fn delete_library_entry(
+    app: AppHandle,
+    request: LibraryEntryActionRequest,
+) -> Result<Vec<LibraryEntry>, String> {
+    let mut entries = read_library_entries(&app)?;
+    entries.retain(|entry| entry.id != request.id);
+    write_library_entries(&app, &entries)?;
+    Ok(entries)
+}
+
+#[tauri::command]
+fn open_library_output(app: AppHandle, request: LibraryEntryActionRequest) -> Result<(), String> {
+    let entry = find_library_entry(&app, &request.id)?;
+    open_path(&entry.output_path, false)
+}
+
+#[tauri::command]
+fn reveal_library_output(app: AppHandle, request: LibraryEntryActionRequest) -> Result<(), String> {
+    let entry = find_library_entry(&app, &request.id)?;
+    open_path(&entry.output_path, true)
 }
 
 #[tauri::command]
@@ -822,6 +892,108 @@ fn app_models_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map(|dir| dir.join("models"))
         .map_err(|error| error.to_string())
+}
+
+fn library_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("library.json"))
+        .map_err(|error| error.to_string())
+}
+
+fn read_library_entries(app: &AppHandle) -> Result<Vec<LibraryEntry>, String> {
+    let path = library_path(app)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let payload = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "failed to read transcript library {}: {error}",
+            path.display()
+        )
+    })?;
+    if payload.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    serde_json::from_str(&payload).map_err(|error| {
+        format!(
+            "failed to parse transcript library {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn write_library_entries(app: &AppHandle, entries: &[LibraryEntry]) -> Result<(), String> {
+    let path = library_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create transcript library directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let payload = serde_json::to_string_pretty(entries)
+        .map_err(|error| format!("failed to serialize transcript library: {error}"))?;
+    fs::write(&path, format!("{payload}\n")).map_err(|error| {
+        format!(
+            "failed to write transcript library {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn find_library_entry(app: &AppHandle, id: &str) -> Result<LibraryEntry, String> {
+    read_library_entries(app)?
+        .into_iter()
+        .find(|entry| entry.id == id)
+        .ok_or_else(|| "Library entry not found".to_string())
+}
+
+fn open_path(path: &str, reveal: bool) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("Output path is empty".to_string());
+    }
+    if !Path::new(path).exists() {
+        return Err(format!("Output file does not exist: {path}"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        if reveal {
+            command.arg("-R");
+        }
+        command.arg(path);
+        command
+            .status()
+            .map_err(|error| format!("failed to open output path: {error}"))?
+            .success()
+            .then_some(())
+            .ok_or_else(|| "failed to open output path".to_string())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let opener = if reveal {
+            Path::new(path).parent()
+        } else {
+            Some(Path::new(path))
+        };
+        let Some(opener) = opener else {
+            return Err("Output path has no parent directory".to_string());
+        };
+        Command::new("xdg-open")
+            .arg(opener)
+            .status()
+            .map_err(|error| format!("failed to open output path: {error}"))?
+            .success()
+            .then_some(())
+            .ok_or_else(|| "failed to open output path".to_string())
+    }
 }
 
 fn recordings_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1427,6 +1599,11 @@ pub fn run() {
             transcribe,
             cancel_transcribe,
             clear_temp_files,
+            list_library_entries,
+            save_library_entry,
+            delete_library_entry,
+            open_library_output,
+            reveal_library_output,
             list_recording_devices,
             start_recording,
             stop_recording,

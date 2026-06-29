@@ -21,6 +21,7 @@ import type {
   AppSection,
   ExportFormat,
   IClearTempFilesResponse,
+  ILibraryEntry,
   InputMode,
   IRecordingDeviceOption,
   IRecordingLevelEvent,
@@ -52,6 +53,7 @@ const App = () => {
   const [recordingLevel, setRecordingLevel] = useState<IRecordingLevelEvent>({ peak: 0, rms: 0 })
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null)
   const [recordingElapsedMs, setRecordingElapsedMs] = useState(0)
+  const [libraryEntries, setLibraryEntries] = useState<ILibraryEntry[]>([])
   const [message, setMessage] = useState('Ready')
 
   // _Hooks
@@ -104,6 +106,10 @@ const App = () => {
     return () => window.clearInterval(interval)
   }, [recordingStartedAt, recordingState])
 
+  useEffect(() => {
+    refreshLibraryEntries()
+  }, [])
+
   // _Computed
   const canTranscribe = input.trim().length > 0 && Boolean(installedModelState.selectedModelPath)
   const selectedFormat = useMemo(() => FORMAT_OPTIONS.find((item) => item.value === format), [format])
@@ -131,6 +137,9 @@ const App = () => {
           ? 'Source folder'
           : 'Custom path',
   }
+
+  const selectedModelLabel =
+    selectedModelId === 'custom' ? getFileName(model) || 'Custom model' : selectedCatalogModel?.name || 'Selected model'
 
   // _Dialog
   const chooseInput = async () => {
@@ -214,7 +223,69 @@ const App = () => {
       title,
       transcribeMode,
       whisperBin,
+      onComplete: async ({ finalLanguage, finalOutputPath, request, response }) => {
+        const outputPathForRecord = response.wroteTo ?? finalOutputPath
+        if (!outputPathForRecord) return
+        const segments = response.transcript?.segments ?? []
+        const durationMs = segments.reduce((max, segment) => Math.max(max, segment.range.endMs), 0)
+        const entry: ILibraryEntry = {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          title: request.title.trim() || getFileStem(request.input),
+          sourcePath: request.input,
+          outputPath: outputPathForRecord,
+          modelLabel: selectedModelLabel,
+          modelPath: request.modelPath ?? '',
+          language: finalLanguage,
+          format: request.format,
+          transcribeMode: request.transcribeMode,
+          createdAt: new Date().toISOString(),
+          elapsedMs: response.elapsedMs ?? null,
+          durationMs: durationMs > 0 ? durationMs : null,
+          segmentCount: segments.length,
+        }
+        try {
+          const entries = await invoke<ILibraryEntry[]>('save_library_entry', { request: { entry } })
+          setLibraryEntries(entries)
+        } catch (error) {
+          setMessage(`Transcript saved, but history update failed: ${String(error)}`)
+        }
+      },
     })
+
+  const refreshLibraryEntries = async () => {
+    try {
+      const entries = await invoke<ILibraryEntry[]>('list_library_entries')
+      setLibraryEntries(entries)
+    } catch (error) {
+      setMessage(String(error))
+    }
+  }
+
+  const deleteLibraryEntry = async (id: string) => {
+    try {
+      const entries = await invoke<ILibraryEntry[]>('delete_library_entry', { request: { id } })
+      setLibraryEntries(entries)
+      setMessage('History entry deleted')
+    } catch (error) {
+      setMessage(String(error))
+    }
+  }
+
+  const openLibraryOutput = async (id: string) => {
+    try {
+      await invoke('open_library_output', { request: { id } })
+    } catch (error) {
+      setMessage(String(error))
+    }
+  }
+
+  const revealLibraryOutput = async (id: string) => {
+    try {
+      await invoke('reveal_library_output', { request: { id } })
+    } catch (error) {
+      setMessage(String(error))
+    }
+  }
 
   const clearTempFiles = async () => {
     try {
@@ -322,6 +393,7 @@ const App = () => {
     installedModels: installedModelState.installedModels,
     keepTemp,
     language,
+    libraryEntries,
     model,
     onChangeActiveSection: setActiveSection,
     onChangeFfmpegBin: setFfmpegBin,
@@ -341,7 +413,11 @@ const App = () => {
     onClearTempFiles: () => void clearTempFiles(),
     onDownloadModel: (id: string) => void installedModelState.downloadModel(id),
     onExportSample: () => void runSample(),
+    onOpenLibraryOutput: (id: string) => void openLibraryOutput(id),
+    onRefreshLibrary: () => void refreshLibraryEntries(),
     onRemoveInput: removeInput,
+    onRevealLibraryOutput: (id: string) => void revealLibraryOutput(id),
+    onDeleteLibraryEntry: (id: string) => void deleteLibraryEntry(id),
     onDeleteRecording: () => void deleteRecordingDraft(),
     onRecordAgain: () => void recordAgain(),
     onStartRecording: () => void startRecording(),

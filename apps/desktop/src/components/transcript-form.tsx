@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import IconDownload from '~icons/lucide/download'
+import IconExternalLink from '~icons/lucide/external-link'
 import IconFileAudio from '~icons/lucide/file-audio'
 import IconFileText from '~icons/lucide/file-text'
 import IconFolderDown from '~icons/lucide/folder-down'
@@ -7,6 +8,7 @@ import IconFolderOpen from '~icons/lucide/folder-open'
 import IconInfo from '~icons/lucide/info'
 import IconMic from '~icons/lucide/mic'
 import IconPause from '~icons/lucide/pause'
+import IconRefreshCw from '~icons/lucide/refresh-cw'
 import IconShieldCheck from '~icons/lucide/shield-check'
 import IconTrash2 from '~icons/lucide/trash-2'
 import { FORMAT_OPTIONS, MODEL_CATALOG, OUTPUT_LOCATION_OPTIONS } from '../constants'
@@ -14,6 +16,7 @@ import type {
   AppSection,
   ExportFormat,
   IEngineStatus,
+  ILibraryEntry,
   InputMode,
   IRecordingDeviceOption,
   IRecordingLevelEvent,
@@ -38,6 +41,7 @@ interface ITranscriptFormProps {
   inputMode: InputMode
   keepTemp: boolean
   language: string
+  libraryEntries: ILibraryEntry[]
   model: string
   outputLocation: OutputLocation
   outputPath: string
@@ -74,6 +78,10 @@ interface ITranscriptFormProps {
   onChooseOutput: () => void
   onClearTempFiles: () => void
   onExportSample: () => void
+  onDeleteLibraryEntry: (id: string) => void
+  onOpenLibraryOutput: (id: string) => void
+  onRefreshLibrary: () => void
+  onRevealLibraryOutput: (id: string) => void
   onTranscribe: () => void
   onDeleteRecording: () => void
   onRecordAgain: () => void
@@ -92,6 +100,22 @@ const formatClock = (durationMs: number) => {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
+const formatLibraryDate = (value: string) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString([], {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short',
+  })
+}
+
+const formatLibraryDuration = (durationMs?: number | null) => {
+  if (!durationMs) return 'Unknown duration'
+  return formatClock(durationMs)
+}
+
 const TranscriptForm = ({
   activeSection,
   canTranscribe,
@@ -105,6 +129,7 @@ const TranscriptForm = ({
   installedModels,
   keepTemp,
   language,
+  libraryEntries,
   model,
   outputLocation,
   outputPath,
@@ -135,9 +160,13 @@ const TranscriptForm = ({
   onChooseModel,
   onChooseOutput,
   onClearTempFiles,
+  onDeleteLibraryEntry,
   onDownloadModel,
   onUninstallModel,
   onExportSample,
+  onOpenLibraryOutput,
+  onRefreshLibrary,
+  onRevealLibraryOutput,
   onRemoveInput,
   onDeleteRecording,
   onRecordAgain,
@@ -149,6 +178,79 @@ const TranscriptForm = ({
   const selectedCatalogModel = MODEL_CATALOG.find((item) => item.id === selectedModelId)
   const mediaFileName = input ? getFileName(input) : ''
   const [showAllModels, setShowAllModels] = useState(false)
+
+  if (activeSection === 'library') {
+    return (
+      <Card className="panel-card library-panel">
+        <CardHeader className="library-header">
+          <div>
+            <CardTitle>History</CardTitle>
+            <CardDescription>
+              Local transcript records saved on this Mac. Files stay where you exported them.
+            </CardDescription>
+          </div>
+          <Button onClick={onRefreshLibrary} size="sm" type="button" variant="secondary">
+            <IconRefreshCw />
+            Refresh
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {libraryEntries.length > 0 ? (
+            <div className="library-list">
+              {libraryEntries.map((entry) => (
+                <article className="library-row" key={entry.id}>
+                  <div className="library-row-main">
+                    <div className="library-row-title">
+                      <IconFileText />
+                      <div>
+                        <strong>{entry.title}</strong>
+                        <span>{formatLibraryDate(entry.createdAt)}</span>
+                      </div>
+                    </div>
+                    <div className="library-paths">
+                      <code title={entry.sourcePath}>Source · {entry.sourcePath}</code>
+                      <code title={entry.outputPath}>Output · {entry.outputPath}</code>
+                    </div>
+                    <div className="library-meta-row">
+                      <span>{entry.modelLabel}</span>
+                      <span>{entry.language}</span>
+                      <span>{entry.format.toUpperCase()}</span>
+                      <span>{entry.transcribeMode === 'smart' ? 'Smart chunks' : 'Single pass'}</span>
+                      <span>{formatLibraryDuration(entry.durationMs)}</span>
+                      <span>{entry.segmentCount} segments</span>
+                    </div>
+                  </div>
+                  <div className="library-row-actions">
+                    <Button onClick={() => onOpenLibraryOutput(entry.id)} size="sm" type="button" variant="secondary">
+                      <IconExternalLink />
+                      Open
+                    </Button>
+                    <Button onClick={() => onRevealLibraryOutput(entry.id)} size="sm" type="button" variant="ghost">
+                      <IconFolderOpen />
+                      Reveal
+                    </Button>
+                    <Button onClick={() => onDeleteLibraryEntry(entry.id)} size="sm" type="button" variant="ghost">
+                      <IconTrash2 />
+                      Delete entry
+                    </Button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="library-empty-state">
+              <IconFileText />
+              <strong>No transcripts yet</strong>
+              <p>Transcribe a file or recording and Otobun will keep a local history entry here.</p>
+              <Button onClick={() => onChangeActiveSection('transcribe')} type="button">
+                Start transcribing
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
 
   if (activeSection === 'models') {
     const recommendedModels = MODEL_CATALOG.filter((item) => item.recommended)

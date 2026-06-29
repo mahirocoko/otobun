@@ -145,3 +145,19 @@ export interface ITranscribeResultMeta {
   elapsedMs?: number | null
   wroteTo?: string | null
 }
+
+export interface ILibraryEntry {
+  id: string
+  title: string
+  sourcePath: string
+  outputPath: string
+  modelLabel: string
+  modelPath: string
+  language: string
+  format: string
+  transcribeMode: string
+  createdAt: string
+  elapsedMs?: number | null
+  durationMs?: number | null
+  segmentCount: number
+}
