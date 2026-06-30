@@ -33,17 +33,58 @@ import type {
 } from './types'
 import { getFileName, getFileStem, resolveDefaultOutputPath } from './utils/paths'
 
+const TRANSCRIBE_PREF_KEYS = {
+  decodeProfile: 'otobun.transcribe.decodeProfile',
+  format: 'otobun.transcribe.format',
+  language: 'otobun.transcribe.language',
+  transcribeMode: 'otobun.transcribe.mode',
+} as const
+
+const LANGUAGE_OPTIONS = ['mixed-th-en', 'th', 'en', 'auto'] as const
+
+const FORMAT_VALUES = FORMAT_OPTIONS.map((item) => item.value)
+const TRANSCRIBE_MODE_VALUES: TranscribeMode[] = ['single', 'smart']
+const DECODE_PROFILE_VALUES = DECODE_PROFILE_OPTIONS.map((item) => item.id)
+
+const getStoredPreference = <T extends string>(key: string, defaultValue: T, allowedValues: readonly T[]): T => {
+  try {
+    if (typeof window === 'undefined') return defaultValue
+    const storedValue = window.localStorage.getItem(key)
+    if (storedValue && allowedValues.includes(storedValue as T)) return storedValue as T
+  } catch (error) {
+    console.warn('Failed to read Otobun preference', error)
+  }
+  return defaultValue
+}
+
+const setStoredPreference = (key: string, value: string) => {
+  try {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(key, value)
+  } catch (error) {
+    console.warn('Failed to save Otobun preference', error)
+  }
+}
+
 const App = () => {
   // _State
   const [activeSection, setActiveSection] = useState<AppSection>('transcribe')
   const [inputMode, setInputMode] = useState<InputMode>('file')
   const [input, setInput] = useState('')
   const [title, setTitle] = useState('')
-  const [language, setLanguage] = useState('mixed-th-en')
-  const [format, setFormat] = useState<ExportFormat>('md')
+  const [language, setLanguage] = useState<string>(() =>
+    getStoredPreference(TRANSCRIBE_PREF_KEYS.language, 'mixed-th-en', LANGUAGE_OPTIONS),
+  )
+  const [format, setFormat] = useState<ExportFormat>(() =>
+    getStoredPreference(TRANSCRIBE_PREF_KEYS.format, 'md', FORMAT_VALUES),
+  )
   const [outputLocation, setOutputLocation] = useState<OutputLocation>('downloads')
-  const [transcribeMode, setTranscribeMode] = useState<TranscribeMode>('single')
-  const [decodeProfile, setDecodeProfile] = useState<DecodeProfile>('fast')
+  const [transcribeMode, setTranscribeMode] = useState<TranscribeMode>(() =>
+    getStoredPreference(TRANSCRIBE_PREF_KEYS.transcribeMode, 'single', TRANSCRIBE_MODE_VALUES),
+  )
+  const [decodeProfile, setDecodeProfile] = useState<DecodeProfile>(() =>
+    getStoredPreference(TRANSCRIBE_PREF_KEYS.decodeProfile, 'fast', DECODE_PROFILE_VALUES),
+  )
   const [outputPath, setOutputPath] = useState('')
   const [ffmpegBin, setFfmpegBin] = useState('ffmpeg')
   const [whisperBin, setWhisperBin] = useState('')
@@ -112,6 +153,22 @@ const App = () => {
   useEffect(() => {
     refreshLibraryEntries()
   }, [])
+
+  useEffect(() => {
+    setStoredPreference(TRANSCRIBE_PREF_KEYS.language, language)
+  }, [language])
+
+  useEffect(() => {
+    setStoredPreference(TRANSCRIBE_PREF_KEYS.format, format)
+  }, [format])
+
+  useEffect(() => {
+    setStoredPreference(TRANSCRIBE_PREF_KEYS.transcribeMode, transcribeMode)
+  }, [transcribeMode])
+
+  useEffect(() => {
+    setStoredPreference(TRANSCRIBE_PREF_KEYS.decodeProfile, decodeProfile)
+  }, [decodeProfile])
 
   // _Computed
   const canTranscribe = input.trim().length > 0 && Boolean(installedModelState.selectedModelPath)

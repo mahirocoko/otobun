@@ -275,17 +275,38 @@ const PreviewCard = ({ output, format, input, meta, transcript, onCopy, onNewTra
   }
 
   const progressRatio = audioDuration > 0 ? audioCurrentTime / audioDuration : 0
+  const elapsedLabel = formatElapsed(meta.elapsedMs)
 
   return (
-    <Card className="preview-card">
+    <Card className="preview-card result-preview-card">
       <CardHeader className="preview-header">
         <div>
           <CardTitle>Output</CardTitle>
           <p className="preview-subtitle">Review the transcript result, then start another pass when ready.</p>
-          <div className="result-meta-row">
-            {formatElapsed(meta.elapsedMs) ? <span>Transcribed in {formatElapsed(meta.elapsedMs)}</span> : null}
-            {meta.wroteTo ? <span>Saved to {meta.wroteTo}</span> : null}
-          </div>
+          {output ? (
+            <dl className="result-summary-list">
+              <div>
+                <dt>Format</dt>
+                <dd>{format.toUpperCase()}</dd>
+              </div>
+              <div>
+                <dt>Segments</dt>
+                <dd>{parsedSegments.length}</dd>
+              </div>
+              {elapsedLabel ? (
+                <div>
+                  <dt>Time</dt>
+                  <dd>{elapsedLabel}</dd>
+                </div>
+              ) : null}
+              {meta.wroteTo ? (
+                <div className="result-summary-path">
+                  <dt>Saved</dt>
+                  <dd title={meta.wroteTo}>{meta.wroteTo}</dd>
+                </div>
+              ) : null}
+            </dl>
+          ) : null}
         </div>
         <div className="preview-actions">
           <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'reader' | 'source')}>

@@ -36,6 +36,16 @@ const STAGE_LABELS: Record<string, string> = {
   transcribing: 'Running Whisper',
 }
 
+const STAGE_FLOW = ['preparing', 'normalizing', 'chunking', 'transcribing', 'parsing', 'exporting']
+
+const getStageIndex = (stage?: string | null) => {
+  if (!stage) return 0
+  if (stage === 'queued' || stage === 'sample') return 0
+  if (stage === 'done') return STAGE_FLOW.length
+  const index = STAGE_FLOW.indexOf(stage)
+  return index < 0 ? 0 : index
+}
+
 const TranscribeProgressScreen = ({
   context,
   activityLog,
@@ -49,6 +59,10 @@ const TranscribeProgressScreen = ({
   const stageLabel = progress?.stage ? (STAGE_LABELS[progress.stage] ?? progress.stage) : 'Preparing'
   const chunkTotal = progress?.chunkTotal ?? 0
   const chunkIndex = progress?.chunkIndex ?? 0
+  const stageIndex = getStageIndex(progress?.stage)
+  const visibleChunkCount = Math.min(Math.max(chunkTotal, 0), 28)
+  const activeChunkRatio = chunkTotal > 0 ? Math.max(0, Math.min(1, chunkIndex / chunkTotal)) : 0
+  const activeChunkCell = Math.max(1, Math.ceil(activeChunkRatio * visibleChunkCount))
 
   return (
     <Card className="panel-card progress-screen-card">
@@ -72,6 +86,18 @@ const TranscribeProgressScreen = ({
           <strong>{progress?.message ?? 'Preparing transcription'}</strong>
           <p>{stageLabel}</p>
         </div>
+        <ol className="progress-stage-rail" aria-label="Transcription stages">
+          {STAGE_FLOW.map((stage, index) => {
+            const state = index < stageIndex ? 'is-done' : index === stageIndex ? 'is-active' : undefined
+
+            return (
+              <li className={state} key={stage}>
+                <span />
+                <strong>{STAGE_LABELS[stage]}</strong>
+              </li>
+            )
+          })}
+        </ol>
         <div className="progress-context-grid">
           <span>
             <span>File:</span> <strong>{context.fileName || 'Selected media'}</strong>
@@ -111,14 +137,14 @@ const TranscribeProgressScreen = ({
                 {formatDuration(progress?.chunkStartMs)} – {formatDuration(progress?.chunkEndMs)}
               </span>
             </div>
-            <div className="chunk-rail">
-              {Array.from({ length: chunkTotal }).map((_, index) => {
+            <div className="chunk-rail" role="img" aria-label="Chunk progress">
+              {Array.from({ length: visibleChunkCount }).map((_, index) => {
                 const item = index + 1
                 return (
                   <span
-                    // biome-ignore lint/suspicious/noArrayIndexKey: chunk count/order is stable for one transcription run
+                    // biome-ignore lint/suspicious/noArrayIndexKey: visual rail cells are derived from stable chunk count
                     key={index}
-                    className={item < chunkIndex ? 'is-done' : item === chunkIndex ? 'is-active' : undefined}
+                    className={item < activeChunkCell ? 'is-done' : item === activeChunkCell ? 'is-active' : undefined}
                   />
                 )
               })}
