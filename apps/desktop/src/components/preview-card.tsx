@@ -70,6 +70,7 @@ const PreviewCard = ({ output, format, input, meta, transcript, onCopy, onNewTra
   const [followPlayback, setFollowPlayback] = useState(true)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const rowRefs = useRef<Array<HTMLElement | null>>([])
+  const manualScrollPauseUntilRef = useRef(0)
   const audioSource = useMemo(() => (input ? convertFileSrc(input) : ''), [input])
 
   const parsedSegments = useMemo<ISegment[]>(() => {
@@ -236,8 +237,13 @@ const PreviewCard = ({ output, format, input, meta, transcript, onCopy, onNewTra
 
   useEffect(() => {
     if (!isPlaying || !followPlayback || viewMode !== 'reader' || activeSegmentIndex < 0) return
+    if (Date.now() < manualScrollPauseUntilRef.current) return
     rowRefs.current[activeSegmentIndex]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [activeSegmentIndex, isPlaying, followPlayback, viewMode])
+
+  const pauseAutoScroll = () => {
+    manualScrollPauseUntilRef.current = Date.now() + 6000
+  }
 
   const togglePlayback = async () => {
     const audio = audioRef.current
@@ -316,10 +322,18 @@ const PreviewCard = ({ output, format, input, meta, transcript, onCopy, onNewTra
                   onPlay={() => setIsPlaying(true)}
                   onTimeUpdate={(event) => setAudioCurrentTime(event.currentTarget.currentTime || 0)}
                 />
-                <Button onClick={() => void togglePlayback()} size="icon" type="button" variant="secondary">
-                  {isPlaying ? <IconPause /> : <IconPlay />}
-                </Button>
-                <div className="result-audio-timeline">
+                <div className="result-audio-side">
+                  <Button onClick={() => void togglePlayback()} size="icon" type="button" variant="secondary">
+                    {isPlaying ? <IconPause /> : <IconPlay />}
+                  </Button>
+                  <div>
+                    <strong>Playback</strong>
+                    <span>
+                      {formatClock(audioCurrentTime)} / {audioDuration > 0 ? formatClock(audioDuration) : '--:--'}
+                    </span>
+                  </div>
+                </div>
+                <div className="result-audio-main">
                   {/* biome-ignore lint/a11y/useKeyWithClickEvents: timeline click is pointer-only */}
                   <span
                     className="progress-track"
@@ -330,27 +344,12 @@ const PreviewCard = ({ output, format, input, meta, transcript, onCopy, onNewTra
                   >
                     <span style={{ width: `${Math.max(0, Math.min(100, progressRatio * 100))}%` }} />
                   </span>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>
-                      {formatClock(audioCurrentTime)} / {audioDuration > 0 ? formatClock(audioDuration) : '--:--'}
-                    </span>
-                    <label
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        fontSize: '0.72rem',
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                        color: followPlayback ? 'var(--primary)' : 'var(--muted-foreground)',
-                        transition: 'color 140ms',
-                      }}
-                    >
+                  <div className="result-audio-actions">
+                    <label className="sync-reader-label">
                       <input
                         type="checkbox"
                         checked={followPlayback}
                         onChange={(event) => setFollowPlayback(event.target.checked)}
-                        style={{ accentColor: 'var(--primary)', cursor: 'pointer' }}
                       />
                       <span>Sync Reader</span>
                     </label>
@@ -360,7 +359,7 @@ const PreviewCard = ({ output, format, input, meta, transcript, onCopy, onNewTra
             ) : null}
             <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'reader' | 'source')}>
               <TabsContent value="reader">
-                <div className="reader-list">
+                <div className="reader-list" onPointerDown={pauseAutoScroll} onWheel={pauseAutoScroll}>
                   {parsedSegments.map((segment, index) => {
                     return (
                       // biome-ignore lint/a11y/useKeyWithClickEvents: seek on row click is pointer-only

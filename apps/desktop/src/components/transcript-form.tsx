@@ -11,9 +11,10 @@ import IconPause from '~icons/lucide/pause'
 import IconRefreshCw from '~icons/lucide/refresh-cw'
 import IconShieldCheck from '~icons/lucide/shield-check'
 import IconTrash2 from '~icons/lucide/trash-2'
-import { FORMAT_OPTIONS, MODEL_CATALOG, OUTPUT_LOCATION_OPTIONS } from '../constants'
+import { DECODE_PROFILE_OPTIONS, FORMAT_OPTIONS, MODEL_CATALOG, OUTPUT_LOCATION_OPTIONS } from '../constants'
 import type {
   AppSection,
+  DecodeProfile,
   ExportFormat,
   IEngineStatus,
   ILibraryEntry,
@@ -37,6 +38,7 @@ interface ITranscriptFormProps {
   engineStatus: IEngineStatus | null
   ffmpegBin: string
   format: ExportFormat
+  decodeProfile: DecodeProfile
   input: string
   inputMode: InputMode
   keepTemp: boolean
@@ -65,6 +67,7 @@ interface ITranscriptFormProps {
   onChangeActiveSection: (value: AppSection) => void
   onChangeFfmpegBin: (value: string) => void
   onChangeFormat: (value: ExportFormat) => void
+  onChangeDecodeProfile: (value: DecodeProfile) => void
   onChangeInputMode: (value: InputMode) => void
   onChangeOutputLocation: (value: OutputLocation) => void
   onChangeKeepTemp: (value: boolean) => void
@@ -124,6 +127,7 @@ const TranscriptForm = ({
   engineStatus,
   ffmpegBin,
   format,
+  decodeProfile,
   input,
   inputMode,
   installedModels,
@@ -147,6 +151,7 @@ const TranscriptForm = ({
   onChangeActiveSection,
   onChangeFfmpegBin,
   onChangeFormat,
+  onChangeDecodeProfile,
   onChangeInputMode,
   onChangeKeepTemp,
   onChangeLanguage,
@@ -178,6 +183,8 @@ const TranscriptForm = ({
   const selectedCatalogModel = MODEL_CATALOG.find((item) => item.id === selectedModelId)
   const mediaFileName = input ? getFileName(input) : ''
   const [showAllModels, setShowAllModels] = useState(false)
+  const hasLanguageModelMismatch =
+    selectedCatalogModel && !selectedCatalogModel.multilingual && (language === 'th' || language === 'mixed-th-en')
 
   if (activeSection === 'library') {
     return (
@@ -270,6 +277,7 @@ const TranscriptForm = ({
             <div>
               <strong>Custom model file</strong>
               <p>Load a local `.bin` or `.gguf` file for the current transcription engine.</p>
+              {model ? <code className="path-line custom-model-path">{model}</code> : null}
             </div>
             <div className="custom-model-actions">
               {model && selectedModelId === 'custom' ? <span className="active-indicator">Active</span> : null}
@@ -292,7 +300,6 @@ const TranscriptForm = ({
               </Button>
             </div>
           </div>
-          {model ? <code className="path-line">{model}</code> : null}
 
           <div className="model-sections">
             <div className="model-section-header">
@@ -482,7 +489,7 @@ const TranscriptForm = ({
     return (
       <Card className="panel-card narrow-panel">
         <CardHeader>
-          <CardTitle>Access</CardTitle>
+          <CardTitle>Permissions</CardTitle>
           <CardDescription>What Otobun needs to record and save files locally.</CardDescription>
         </CardHeader>
         <CardContent className="settings-stack">
@@ -647,7 +654,9 @@ const TranscriptForm = ({
                   ? 'record-setup is-recording'
                   : recordingState === 'review'
                     ? 'record-setup is-reviewing'
-                    : 'record-setup'
+                    : recordingState === 'saving'
+                      ? 'record-setup is-saving'
+                      : 'record-setup'
               }
             >
               <div className="record-header-row">
@@ -715,6 +724,12 @@ const TranscriptForm = ({
                     </div>
                   </div>
                 ) : null}
+                {recordingState === 'saving' ? (
+                  <div className="recording-saving-card">
+                    <IconRefreshCw className="spinner-icon" />
+                    <span>Saving recording draft...</span>
+                  </div>
+                ) : null}
                 {recordingState === 'review' && recordingPath ? (
                   <div className="recording-review-card">
                     <AudioWaveformPlayer path={recordingPath} title="Listen before using" />
@@ -773,60 +788,100 @@ const TranscriptForm = ({
               </SelectContent>
             </Select>
           </div>
-        </div>
 
-        <div className="model-summary-card">
-          <IconFileText />
-          <div>
-            <span>Model</span>
-            <strong>
-              {selectedModelId === 'custom'
-                ? model
-                  ? getFileName(model)
-                  : 'Custom model required'
-                : selectedCatalogModel?.name}
-            </strong>
-            <p>
-              {selectedModelId === 'custom'
-                ? model || 'Select a local model file to run transcription.'
-                : installedModels[selectedModelId] || 'Install this model before transcribing.'}
+          <div className="field-row form-grid-wide">
+            <span>Decode profile</span>
+            <Select value={decodeProfile} onValueChange={(value) => onChangeDecodeProfile(value as DecodeProfile)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DECODE_PROFILE_OPTIONS.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="field-hint">
+              {DECODE_PROFILE_OPTIONS.find((item) => item.id === decodeProfile)?.description}
             </p>
           </div>
-          <Button onClick={() => onChangeActiveSection('models')} size="sm" type="button" variant="secondary">
-            Change
-          </Button>
         </div>
 
-        <div className="format-row">
-          {FORMAT_OPTIONS.map((item) => (
-            <Button
-              className={format === item.value ? 'format-button is-selected' : 'format-button'}
-              key={item.value}
-              onClick={() => onChangeFormat(item.value)}
-              size="sm"
-              type="button"
-              variant="secondary"
-            >
-              {item.label}
-            </Button>
-          ))}
-        </div>
-
-        <div className="output-summary-card">
-          <div>
-            <span>Output</span>
-            <strong>
-              {outputLocation === 'downloads'
-                ? 'Downloads / Otobun'
-                : outputLocation === 'source-folder'
-                  ? 'Source folder'
-                  : 'Custom path'}
-            </strong>
-            <p>{outputPath || 'Files save to Downloads/Otobun unless you choose a path.'}</p>
+        <div className="transcribe-config-group">
+          <div className="config-column">
+            <div className="model-summary-card">
+              <IconFileText />
+              <div>
+                <span>Model</span>
+                <strong>
+                  {selectedModelId === 'custom'
+                    ? model
+                      ? getFileName(model)
+                      : 'Custom model required'
+                    : selectedCatalogModel?.name}
+                </strong>
+                <p>
+                  {selectedModelId === 'custom'
+                    ? model || 'Select a local model file to run transcription.'
+                    : installedModels[selectedModelId] || 'Install this model before transcribing.'}
+                </p>
+              </div>
+              <Button onClick={() => onChangeActiveSection('models')} size="sm" type="button" variant="secondary">
+                Change
+              </Button>
+            </div>
+            {hasLanguageModelMismatch ? (
+              <div className="config-warning-card">
+                <IconInfo />
+                <div>
+                  <strong>Use a multilingual model for Thai audio</strong>
+                  <p>
+                    {selectedCatalogModel?.name ?? 'This model'} is English-only, but the current language setting
+                    includes Thai.
+                  </p>
+                </div>
+              </div>
+            ) : null}
           </div>
-          <Button onClick={onChooseOutput} size="sm" type="button" variant="secondary">
-            Choose path
-          </Button>
+
+          <div className="config-column">
+            <div className="output-summary-card">
+              <div>
+                <span>Output</span>
+                <strong>
+                  {outputLocation === 'downloads'
+                    ? 'Downloads / Otobun'
+                    : outputLocation === 'source-folder'
+                      ? 'Source folder'
+                      : 'Custom path'}
+                </strong>
+                <p>{outputPath || 'Files save to Downloads/Otobun unless you choose a path.'}</p>
+              </div>
+              <Button onClick={onChooseOutput} size="sm" type="button" variant="secondary">
+                Choose path
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="format-select-group">
+          <span className="format-label">Export format</span>
+          <div className="format-row">
+            {FORMAT_OPTIONS.map((item) => (
+              <Button
+                className={format === item.value ? 'format-button is-selected' : 'format-button'}
+                key={item.value}
+                onClick={() => onChangeFormat(item.value)}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                {item.label}
+              </Button>
+            ))}
+          </div>
         </div>
 
         <div className="action-row">

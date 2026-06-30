@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useEffect, useRef, useState } from 'react'
 import type {
+  DecodeProfile,
   ExportFormat,
   ICancelTranscribeResponse,
   ICommandResponse,
@@ -20,6 +21,7 @@ interface IRunTranscribeInput {
   input: string
   keepTemp: boolean
   language: string
+  decodeProfile: DecodeProfile
   modelPath?: string
   outputLocation: OutputLocation
   outputPath: string
@@ -137,7 +139,12 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
     onMessage('Transcribing locally')
 
     try {
-      const finalLanguage = input.language === 'mixed-th-en' ? 'auto' : input.language
+      const finalLanguage =
+        input.decodeProfile === 'thai-dialogue' && (input.language === 'mixed-th-en' || input.language === 'auto')
+          ? 'th'
+          : input.language === 'mixed-th-en'
+            ? 'auto'
+            : input.language
       const finalOutputPath =
         input.outputPath.trim() || (await resolveDefaultOutputPath(input.input, input.format, input.outputLocation))
       const response = await invoke<ICommandResponse>('transcribe', {
@@ -147,6 +154,7 @@ const useTranscriptionJob = (onMessage: (message: string) => void) => {
           format: input.format,
           title: input.title.trim() || null,
           language: finalLanguage.trim() || null,
+          decodeProfile: input.decodeProfile,
           ffmpegBin: input.ffmpegBin.trim() || null,
           whisperBin: input.whisperBin.trim() || null,
           keepTemp: input.keepTemp,

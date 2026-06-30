@@ -10,6 +10,8 @@ export type OutputLocation = 'downloads' | 'source-folder' | 'custom'
 
 export type TranscribeMode = 'single' | 'smart'
 
+export type DecodeProfile = 'fast' | 'thai-dialogue'
+
 export interface ISpeaker {
   id: string
   label: string
@@ -89,6 +91,12 @@ export interface IRecordingDeviceOption {
 
 export interface IOutputLocationOption {
   id: OutputLocation
+  label: string
+  description: string
+}
+
+export interface IDecodeProfileOption {
+  id: DecodeProfile
   label: string
   description: string
 }

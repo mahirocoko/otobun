@@ -7,6 +7,7 @@ import { HeroCard } from './components/hero-card'
 import { TranscribeWorkspace } from './components/transcribe/transcribe-workspace'
 import { TranscriptForm } from './components/transcript-form'
 import {
+  DECODE_PROFILE_OPTIONS,
   FORMAT_OPTIONS,
   MEDIA_EXTENSIONS,
   MODEL_CATALOG,
@@ -19,6 +20,7 @@ import { useModelPreference, writeModelPreference } from './hooks/use-model-pref
 import { useTranscriptionJob } from './hooks/use-transcription-job'
 import type {
   AppSection,
+  DecodeProfile,
   ExportFormat,
   IClearTempFilesResponse,
   ILibraryEntry,
@@ -41,6 +43,7 @@ const App = () => {
   const [format, setFormat] = useState<ExportFormat>('md')
   const [outputLocation, setOutputLocation] = useState<OutputLocation>('downloads')
   const [transcribeMode, setTranscribeMode] = useState<TranscribeMode>('single')
+  const [decodeProfile, setDecodeProfile] = useState<DecodeProfile>('fast')
   const [outputPath, setOutputPath] = useState('')
   const [ffmpegBin, setFfmpegBin] = useState('ffmpeg')
   const [whisperBin, setWhisperBin] = useState('')
@@ -113,6 +116,10 @@ const App = () => {
   // _Computed
   const canTranscribe = input.trim().length > 0 && Boolean(installedModelState.selectedModelPath)
   const selectedFormat = useMemo(() => FORMAT_OPTIONS.find((item) => item.value === format), [format])
+  const selectedDecodeProfile = useMemo(
+    () => DECODE_PROFILE_OPTIONS.find((item) => item.id === decodeProfile),
+    [decodeProfile],
+  )
   const workspaceClassName =
     activeSection === 'transcribe' && transcriptionJob.output
       ? 'workspace-flow workspace-output'
@@ -127,7 +134,7 @@ const App = () => {
       selectedModelId === 'custom'
         ? getFileName(model) || 'Custom model'
         : selectedCatalogModel?.name || 'Selected model',
-    modeLabel: transcribeMode === 'smart' ? 'Smart chunks' : 'Single pass',
+    modeLabel: `${transcribeMode === 'smart' ? 'Smart chunks' : 'Single pass'} · ${selectedDecodeProfile?.label ?? 'Fast'}`,
     languageLabel: language === 'mixed-th-en' ? 'Thai / English' : language === 'auto' ? 'Auto detect' : language,
     formatLabel: selectedFormat?.label ?? format.toUpperCase(),
     outputLabel:
@@ -214,6 +221,7 @@ const App = () => {
     transcriptionJob.runTranscribe({
       ffmpegBin,
       format,
+      decodeProfile,
       input,
       keepTemp,
       language,
@@ -388,6 +396,7 @@ const App = () => {
     engineStatus,
     ffmpegBin,
     format,
+    decodeProfile,
     input,
     inputMode,
     installedModels: installedModelState.installedModels,
@@ -398,6 +407,7 @@ const App = () => {
     onChangeActiveSection: setActiveSection,
     onChangeFfmpegBin: setFfmpegBin,
     onChangeFormat: setFormat,
+    onChangeDecodeProfile: setDecodeProfile,
     onChangeInputMode: setInputMode,
     onChangeKeepTemp: setKeepTemp,
     onChangeLanguage: setLanguage,

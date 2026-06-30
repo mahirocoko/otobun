@@ -74,22 +74,22 @@ const TranscribeProgressScreen = ({
         </div>
         <div className="progress-context-grid">
           <span>
-            <span>File</span> <strong>{context.fileName || 'Selected media'}</strong>
+            <span>File:</span> <strong>{context.fileName || 'Selected media'}</strong>
           </span>
           <span>
-            <span>Model</span> <strong>{context.modelName}</strong>
+            <span>Model:</span> <strong>{context.modelName}</strong>
           </span>
           <span>
-            <span>Mode</span> <strong>{context.modeLabel}</strong>
+            <span>Mode:</span> <strong>{context.modeLabel}</strong>
           </span>
           <span>
-            <span>Language</span> <strong>{context.languageLabel}</strong>
+            <span>Language:</span> <strong>{context.languageLabel}</strong>
           </span>
           <span>
-            <span>Format</span> <strong>{context.formatLabel}</strong>
+            <span>Format:</span> <strong>{context.formatLabel}</strong>
           </span>
           <span>
-            <span>Output</span> <strong>{context.outputLabel}</strong>
+            <span>Output:</span> <strong>{context.outputLabel}</strong>
           </span>
         </div>
         <div className="progress-screen-meter">

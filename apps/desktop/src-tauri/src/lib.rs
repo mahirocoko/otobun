@@ -12,7 +12,7 @@ use cpal::SampleFormat;
 use hound::{SampleFormat as WavSampleFormat, WavReader, WavSpec, WavWriter};
 use otobun_core::{
     export_transcript, sample_transcript, transcribe_file_with_progress, CancellationToken,
-    ChunkMode, ExportFormat, TranscribeOptions, TranscribeProgress, Transcript,
+    ChunkMode, DecodeProfile, ExportFormat, TranscribeOptions, TranscribeProgress, Transcript,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -56,6 +56,7 @@ struct TranscribeRequest {
     keep_temp: bool,
     output_path: Option<String>,
     chunk_mode: Option<String>,
+    decode_profile: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -555,6 +556,7 @@ fn transcribe_blocking(
     options.language = request.language;
     options.keep_temp = request.keep_temp;
     options.chunk_mode = parse_chunk_mode(request.chunk_mode.as_deref());
+    options.decode_profile = parse_decode_profile(request.decode_profile.as_deref());
 
     if let Some(ffmpeg_bin) = request.ffmpeg_bin.filter(|value| !value.trim().is_empty()) {
         options.ffmpeg_bin = PathBuf::from(ffmpeg_bin);
@@ -1466,6 +1468,13 @@ fn parse_chunk_mode(value: Option<&str>) -> ChunkMode {
     match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
         Some("smart") => ChunkMode::Smart,
         _ => ChunkMode::Single,
+    }
+}
+
+fn parse_decode_profile(value: Option<&str>) -> DecodeProfile {
+    match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("thai-dialogue") => DecodeProfile::ThaiDialogue,
+        _ => DecodeProfile::Fast,
     }
 }
 

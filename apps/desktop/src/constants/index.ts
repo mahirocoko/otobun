@@ -1,4 +1,10 @@
-import type { IFormatOption, IModelCatalogItem, IOutputLocationOption, IRecordingDeviceOption } from '../types'
+import type {
+  IDecodeProfileOption,
+  IFormatOption,
+  IModelCatalogItem,
+  IOutputLocationOption,
+  IRecordingDeviceOption,
+} from '../types'
 
 export const FORMAT_OPTIONS: IFormatOption[] = [
   { value: 'md', label: 'Notes', help: 'Clean Markdown transcript', extension: 'md' },
@@ -6,6 +12,19 @@ export const FORMAT_OPTIONS: IFormatOption[] = [
   { value: 'srt', label: 'SRT', help: 'Subtitle file', extension: 'srt' },
   { value: 'vtt', label: 'VTT', help: 'Web captions', extension: 'vtt' },
   { value: 'json', label: 'JSON', help: 'Structured segments', extension: 'json' },
+]
+
+export const DECODE_PROFILE_OPTIONS: IDecodeProfileOption[] = [
+  {
+    id: 'fast',
+    label: 'Fast',
+    description: 'Current quick decode path for general files.',
+  },
+  {
+    id: 'thai-dialogue',
+    label: 'Thai dialogue completeness',
+    description: 'Slower Turbo-friendly decode with Thai prompt and wider search.',
+  },
 ]
 
 export const MEDIA_EXTENSIONS = ['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'mp4', 'mov', 'mkv', 'webm']

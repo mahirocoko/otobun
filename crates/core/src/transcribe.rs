@@ -74,6 +74,12 @@ pub enum ChunkMode {
     Smart,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeProfile {
+    Fast,
+    ThaiDialogue,
+}
+
 #[derive(Debug, Clone)]
 pub struct TranscribeOptions {
     pub input: PathBuf,
@@ -84,6 +90,7 @@ pub struct TranscribeOptions {
     pub whisper_bin: PathBuf,
     pub keep_temp: bool,
     pub chunk_mode: ChunkMode,
+    pub decode_profile: DecodeProfile,
     pub cancellation_token: CancellationToken,
 }
 
@@ -98,6 +105,7 @@ impl TranscribeOptions {
             whisper_bin: PathBuf::from("whisper-cli"),
             keep_temp: false,
             chunk_mode: ChunkMode::Single,
+            decode_profile: DecodeProfile::Fast,
             cancellation_token: CancellationToken::new(),
         }
     }
@@ -275,6 +283,11 @@ where
     });
 
     let mut command = Command::new(&options.whisper_bin);
+    let (beam_size, best_of, prompt) = match options.decode_profile {
+        DecodeProfile::Fast => (1, 1, None),
+        DecodeProfile::ThaiDialogue => (5, 5, Some("ภาษาไทย บทสนทนา คำถาม คำตอบ")),
+    };
+
     command
         .arg("-m")
         .arg(&options.model)
@@ -289,9 +302,13 @@ where
         .arg("-p")
         .arg("1")
         .arg("-bs")
-        .arg("1")
+        .arg(beam_size.to_string())
         .arg("-bo")
-        .arg("1");
+        .arg(best_of.to_string());
+
+    if let Some(prompt) = prompt {
+        command.arg("--prompt").arg(prompt);
+    }
 
     if let Some(language) = &options.language {
         command.arg("-l").arg(language);

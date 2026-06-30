@@ -8,7 +8,7 @@ interface IHeroCardProps {
 
 const SECTION_TITLES: Record<AppSection, string> = {
   transcribe: 'Transcribe',
-  library: 'Library',
+  library: 'History',
   models: 'Models',
   permissions: 'Permissions',
   settings: 'Settings',

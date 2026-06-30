@@ -50,7 +50,7 @@ const AppSidebar = ({ activeSection, onChangeSection }: IAppSidebarProps) => (
             variant="ghost"
           >
             <Icon />
-            {item.label}
+            <span>{item.label}</span>
           </Button>
         )
       })}
