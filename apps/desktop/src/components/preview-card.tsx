@@ -6,6 +6,7 @@ import IconPause from '~icons/lucide/pause'
 import IconPlay from '~icons/lucide/play'
 import IconRotateCcw from '~icons/lucide/rotate-ccw'
 import type { ExportFormat, ITranscribeResultMeta, ITranscript } from '../types'
+import { getPathTail } from './transcript-form/helpers'
 import { Button } from './ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
@@ -281,8 +282,8 @@ const PreviewCard = ({ output, format, input, meta, transcript, onCopy, onNewTra
     <Card className="preview-card result-preview-card">
       <CardHeader className="preview-header">
         <div>
-          <CardTitle>Output</CardTitle>
-          <p className="preview-subtitle">Review the transcript result, then start another pass when ready.</p>
+          <CardTitle>Transcript output</CardTitle>
+          <p className="preview-subtitle">Review, copy, or start another local pass.</p>
           {output ? (
             <dl className="result-summary-list">
               <div>
@@ -302,7 +303,7 @@ const PreviewCard = ({ output, format, input, meta, transcript, onCopy, onNewTra
               {meta.wroteTo ? (
                 <div className="result-summary-path">
                   <dt>Saved</dt>
-                  <dd title={meta.wroteTo}>{meta.wroteTo}</dd>
+                  <dd title={meta.wroteTo}>{getPathTail(meta.wroteTo, 3)}</dd>
                 </div>
               ) : null}
             </dl>

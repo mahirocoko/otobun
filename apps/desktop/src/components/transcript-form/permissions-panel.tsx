@@ -7,14 +7,14 @@ const PermissionsPanel = () => (
   <Card className="panel-card narrow-panel">
     <CardHeader>
       <CardTitle>Permissions</CardTitle>
-      <CardDescription>What Otobun needs to record and save files locally.</CardDescription>
+      <CardDescription>Local access needed for recording and exports.</CardDescription>
     </CardHeader>
-    <CardContent className="settings-stack">
+    <CardContent className="settings-stack permissions-stack">
       <div className="permission-row">
         <IconMic />
         <div>
           <strong>Microphone</strong>
-          <p>Used only when you press Record. Audio stays on this Mac.</p>
+          <p>Used only while recording local audio.</p>
         </div>
         <span className="state-chip is-ready">Prompt on first use</span>
       </div>
@@ -22,7 +22,7 @@ const PermissionsPanel = () => (
         <IconFolderOpen />
         <div>
           <strong>Files and folders</strong>
-          <p>Used for imported media, downloaded models, recordings, and transcript exports.</p>
+          <p>Used for media, models, recordings, and exports.</p>
         </div>
         <span className="state-chip is-ready">Local files</span>
       </div>

@@ -1214,7 +1214,39 @@ button:disabled {
 /* permissions/settings */
 .settings-stack {
   display: grid;
-  gap: 13px;
+  gap: 12px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-elevated);
+  padding: 12px;
+}
+
+.settings-section-header {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-section-header strong {
+  color: var(--foreground);
+  font-size: 0.88rem;
+  font-weight: 760;
+}
+
+.settings-section-header span {
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
 }
 
 .permission-row {
@@ -1300,7 +1332,7 @@ button:disabled {
 
 .raw-output {
   width: 100%;
-  min-height: 520px;
+  min-height: 420px;
   max-height: 72vh;
   overflow: auto;
   white-space: pre-wrap;
@@ -1398,9 +1430,9 @@ button:disabled {
 }
 
 .preview-subtitle {
-  margin: 4px 0 0;
+  margin: 3px 0 0;
   color: var(--muted-foreground);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   line-height: 1.4;
 }
 
@@ -1408,8 +1440,8 @@ button:disabled {
   display: flex;
   max-width: 760px;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 10px 0 0;
+  gap: 5px;
+  margin: 8px 0 0;
   padding: 0;
 }
 
@@ -1422,7 +1454,7 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--input), transparent 10%);
-  padding: 5px 7px;
+  padding: 4px 6px;
 }
 
 .result-summary-list dt,
@@ -2129,7 +2161,7 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card-elevated);
-  padding: 14px;
+  padding: 12px;
 }
 
 .engine-status-card > div {
@@ -2145,7 +2177,7 @@ button:disabled {
 }
 
 .engine-status-card p {
-  margin: 4px 0 8px;
+  margin: 4px 0 6px;
   color: var(--muted-foreground);
   font-size: 0.8rem;
   line-height: 1.4;
@@ -2155,14 +2187,13 @@ button:disabled {
   display: inline-flex;
   max-width: 100%;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--input);
+  border: 0;
+  background: transparent;
   color: var(--muted-foreground);
   font-family: var(--font-mono);
   font-size: 0.72rem;
   line-height: 1;
-  padding: 6px 9px;
+  padding: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2170,7 +2201,7 @@ button:disabled {
 .permissions-stack .permission-row,
 .settings-stack .permission-row {
   align-items: center;
-  padding: 14px;
+  padding: 12px;
 }
 
 .permission-row > svg {
@@ -2195,6 +2226,10 @@ button:disabled {
 }
 
 @media (max-width: 760px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
   .engine-status-card,
   .permission-row {
     flex-direction: column;
